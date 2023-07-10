@@ -80,7 +80,10 @@ pyx10.X10FunctionEvent.as_cm11a_packet = X10FunctionEvent_as_cm11a_packet
 def X10RelativeDimEvent_as_cm11a_packet(self):
   """Convert this event into a packet for the CM11A."""
   
-  return bytes((0x06 | (int(self.dim * 22) & 0x1F) << 3, (self.house_code & 0xF) << 4 | (self.function & 0xF)))
+  return bytes((
+    0x06 | (int(abs(self.dim) * 22) & 0x1F) << 3,
+    (self.house_code & 0xF) << 4 | (pyx10.X10_FN_DIM if self.dim < 0 else pyx10.X10_FN_BRIGHT)
+  ))
 
 pyx10.X10RelativeDimEvent.as_cm11a_packet = X10RelativeDimEvent_as_cm11a_packet
 
