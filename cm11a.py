@@ -282,10 +282,3 @@ class CM11A(pyx10.X10Interface):
     self._shutdown = True
     self._serial.stop()
     self._stopped_event.wait()
-
-
-intf = CM11A('/dev/ttyS0')
-ert = pyx10.EventReaderThread(intf)
-intf.start()
-ert.start()
-x10 = intf.get_controller('D')

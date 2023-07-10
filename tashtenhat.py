@@ -2,6 +2,7 @@
 
 
 from collections import deque
+from enum import Enum
 from fcntl import ioctl
 import os
 from queue import Queue, Empty
@@ -18,6 +19,9 @@ QUEUE_TIMEOUT = 0.25
 I2C_BASE_ADDR = 0x58  # 'X' in ASCII
 
 IOCTL_I2C_TARGET = 0x0703
+
+
+InterfaceType = Enum('InterfaceType', ('PL513', 'TW523', 'XTB_523'))
 
 
 class EventSendFailure(Exception):
@@ -92,11 +96,11 @@ class I2cAdapter(Thread):
 class TashTenHat(pyx10.X10Interface):
   """Represents the TashTenHat accessed over i2c-dev."""
   
-  def __init__(self, i2c_device, real_tw523=True):
+  def __init__(self, i2c_device, interface_type):
     super().__init__()
     self._bep = tw523.BitEventProcessor(self._handle_event_in)
     self._i2c = I2cAdapter(i2c_device, self._bep)
-    self._real_tw523 = real_tw523
+    self._interface_type = interface_type
     self._events_echo = None
     self._shutdown = False
     self._stopped_event = Event()
@@ -109,17 +113,23 @@ class TashTenHat(pyx10.X10Interface):
     for _ in range(MAX_FAILURES):
       self._events_echo = Queue()
       self._i2c.write(bit_str_to_bytes(event.as_bit_str()) + b'\x00')
-      if self._real_tw523:
+      if self._interface_type == InterfaceType.PL513:
+        # PL513 is transmit-only, make no attempt to verify that events are echoed
+        expected_events = deque()
+      elif self._interface_type == InterfaceType.TW523:
+        # TW523 and PSC05 mangle/truncate certain events so we have to expect different ones than we transmit to be echoed
         expected_events = deque(event.tw523ify())
-      else:
+      elif self._interface_type == InterfaceType.XTB_523:
+        # XTB-523 and XTB-IIR faithfully echo events as transmitted
         expected_events = deque((event,))
-      while True:
+      else:
+        raise ValueError('unrecognized interface type %s' % self._interface_type)
+      while expected_events:
         try:
           next_event = self._events_echo.get(timeout=EVENT_TIMEOUT)
         except Empty:
           break
         if next_event == expected_events[0]: expected_events.popleft()
-        if not expected_events: break
       if not expected_events: break
     else:
       raise EventSendFailure('failed to send %s after %d attempts' % (event, MAX_FAILURES))
@@ -162,10 +172,3 @@ class TashTenHat(pyx10.X10Interface):
     self._shutdown = True
     self._i2c.stop()
     self._stopped_event.wait()
-
-
-intf = TashTenHat('/dev/i2c-1')
-ert = pyx10.EventReaderThread(intf)
-intf.start()
-ert.start()
-x10 = intf.get_controller('D')
