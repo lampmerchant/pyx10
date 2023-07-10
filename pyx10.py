@@ -211,6 +211,13 @@ class X10Controller:
       unit_code=X10_UNIT_CODES[unit_number],
       data_byte=data_byte, cmd_byte=cmd_byte,
     ))
+  
+  def hail_req(self):
+    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_HAIL_REQ))
+  
+  def status_req(self, unit_number=None):
+    self.unit(unit_number)
+    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_STATUS_REQ))
 
 
 class X10Interface(Thread):
