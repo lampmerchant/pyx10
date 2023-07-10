@@ -15,23 +15,21 @@ import serial
 import pyx10
 
 
-# The CM11A appears to have a timeout of some sort that resets the serial interface.  You can't wait any significant length of time
-# between bytes.
-
-# Polls have to be dealt with before we can send a command.  The time poll will not be interrupted by a receive poll.
-
-# One push of the dim or bright button on MC10A appears to be interpreted as 0xE (14) out of 210 or 0x3 out of 210, not sure what
-# the pattern is.
-
-# There remain extremely unlikely but not-impossible edge cases if the CM11A starts polling right as we go to send it an event.
-
-# CM11A's receive buffer seems to be circular.  I don't know what the heyu code is on about with 'deferred' dim parameters...
+# CM11A notes:
+# - The CM11A appears to have a timeout of some sort that resets the serial interface.  You can't wait any significant length of
+#    time between bytes.
+# - Polls have to be dealt with before we can send a command.  The time poll will not be interrupted by a receive poll.
+# - One push of the dim or bright button on MC10A appears to be interpreted as 0xE (14) out of 210 or 0x3 out of 210, not sure what
+#    the pattern is.  Possibly has to do with the transmission starting on the up or down phase?
+# - There remain extremely unlikely but not-impossible edge cases if the CM11A starts polling right as we go to send it an event.
+#    TODO what are they?
+# - CM11A's receive buffer seems to be circular.  I don't know what the heyu code is on about with 'deferred' dim parameters...
 
 
-MAX_FAILURES = 5
-READY_TIMEOUT = 10
-SERIAL_TIMEOUT = 0.25
-POLL_WAIT_TIME = 1.5
+MAX_FAILURES = 5  # Maximum number of times the checksum can be wrong when attempting to send a packet to the CM11A
+READY_TIMEOUT = 10  # Maximum length of time the CM11A can take to send a transmission
+SERIAL_TIMEOUT = 0.25  # Maximum length of time we should wait for the CM11A to respond to a byte
+POLL_WAIT_TIME = 1.5  # Maximum length of time we should wait for the CM11A to send a polling byte
 
 CM11A_POLL_RECV = 0x5A
 CM11A_POLL_RECV_RESP = 0xC3
@@ -39,6 +37,9 @@ CM11A_POLL_TIME = 0xA5
 CM11A_POLL_TIME_RESP = 0x9B
 CM11A_POLL_BYTES = (CM11A_POLL_RECV, CM11A_POLL_TIME)
 CM11A_READY_RESP = 0x55
+
+
+# Exceptions
 
 
 class NoResponseError(Exception):
@@ -55,6 +56,59 @@ class InterruptedByPoll(Exception):
   def __init__(self, poll_byte):
     super().__init__('interrupted by poll byte 0x%02X' % poll_byte)
     self.poll_byte = poll_byte
+
+
+# Monkey patches for X10 event classes
+
+
+def X10AddressEvent_as_cm11a_packet(self):
+  """Convert this event into a packet for the CM11A."""
+  
+  return bytes((0x04, (self.house_code & 0xF) << 4 | (self.unit_code & 0xF)))
+
+pyx10.X10AddressEvent.as_cm11a_packet = X10AddressEvent_as_cm11a_packet
+
+
+def X10FunctionEvent_as_cm11a_packet(self):
+  """Convert this event into a packet for the CM11A."""
+  
+  return bytes((0x06, (self.house_code & 0xF) << 4 | (self.function & 0xF)))
+
+pyx10.X10FunctionEvent.as_cm11a_packet = X10FunctionEvent_as_cm11a_packet
+
+
+def X10RelativeDimEvent_as_cm11a_packet(self):
+  """Convert this event into a packet for the CM11A."""
+  
+  return bytes((0x06 | (int(self.dim * 22) & 0x1F) << 3, (self.house_code & 0xF) << 4 | (self.function & 0xF)))
+
+pyx10.X10RelativeDimEvent.as_cm11a_packet = X10RelativeDimEvent_as_cm11a_packet
+
+
+def X10AbsoluteDimEvent_as_cm11a_packet(self):
+  """Convert this event into a packet for the CM11A."""
+  
+  dim = int(self.dim * 31)
+  return bytes((0x06, (dim & 0xF) << 4 | (pyx10.X10_FN_PRESET_DIM_1 if dim & 0x10 else pyx10.X10_FN_PRESET_DIM_0)))
+
+pyx10.X10AbsoluteDimEvent.as_cm11a_packet = X10AbsoluteDimEvent_as_cm11a_packet
+
+
+def X10ExtendedCodeEvent_as_cm11a_packet(self):
+  """Convert this event into a packet for the CM11A."""
+  
+  return bytes((
+    0x07,
+    (self.house_code & 0xF) << 4 | pyx10.X10_FN_EXT_CODE,
+    self.unit_code & 0xF,
+    self.data_byte & 0xFF,
+    self.cmd_byte & 0xFF,
+  ))
+
+pyx10.X10ExtendedCodeEvent.as_cm11a_packet = X10ExtendedCodeEvent_as_cm11a_packet
+
+
+# Classes
 
 
 class SerialAdapter(Thread, Queue):
@@ -110,26 +164,10 @@ class CM11A(pyx10.X10Interface):
   def _handle_event(self, event):
     """Send an outbound event to the CM11A."""
     
-    if isinstance(event, pyx10.X10AddressEvent):
-      packet = bytes((0x04, (event.house_code & 0xF) << 4 | (event.unit_code & 0xF)))
-    elif isinstance(event, pyx10.X10FunctionEvent):
-      packet = bytes((0x06, (event.house_code & 0xF) << 4 | (event.function & 0xF)))
-    elif isinstance(event, pyx10.X10RelativeDimEvent):
-      packet = bytes((0x06 | (int(event.dim * 22) & 0x1F) << 3, (event.house_code & 0xF) << 4 | (event.function & 0xF)))
-    elif isinstance(event, pyx10.X10AbsoluteDimEvent):
-      dim = int(event.dim * 31)
-      packet = bytes((0x06, (dim & 0xF) << 4 | (pyx10.X10_FN_PRESET_DIM_1 if dim & 0x10 else pyx10.X10_FN_PRESET_DIM_0)))
-    elif isinstance(event, pyx10.X10ExtendedCodeEvent):
-      packet = bytes((
-        0x07,
-        (event.house_code & 0xF) << 4 | pyx10.X10_FN_EXT_CODE,
-        event.unit_code & 0xF,
-        event.data_byte & 0xFF,
-        event.cmd_byte & 0xFF,
-      ))
-    else:
+    try:
+      packet = event.as_cm11a_packet()
+    except AttributeError:
       raise ValueError('%s is not an event type that can be serialized for the CM11A' % type(event).__name__)
-    
     packet_desc = str(event)
     checksum = sum(packet) & 0xFF
     for _ in range(MAX_FAILURES):

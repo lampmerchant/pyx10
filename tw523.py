@@ -17,6 +17,9 @@ from collections import deque
 import pyx10
 
 
+# Functions
+
+
 def x10_bit_str(n):
   """Convert an X10 code into its line bit representation."""
   
@@ -29,6 +32,7 @@ def x10_bit_str(n):
 
 
 # Monkey patches for X10 event classes
+
 
 def X10AddressEvent_as_bit_str(self):
   """Convert this event into its line bit representation."""
@@ -99,6 +103,9 @@ def X10ExtendedCodeEvent_tw523ify(self):
     yield pyx10.X10FunctionEvent(house_code=self.house_code, function=pyx10.X10_FN_EXT_CODE)
 
 pyx10.X10ExtendedCodeEvent.tw523ify = X10ExtendedCodeEvent_tw523ify
+
+
+# Classes
 
 
 class BitEventProcessor:
@@ -193,6 +200,3 @@ class BitEventProcessor:
     self.feed_bit('1' if byte & 0x04 else '0')
     self.feed_bit('1' if byte & 0x02 else '0')
     self.feed_bit('1' if byte & 0x01 else '0')
-
-
-

@@ -12,20 +12,26 @@ import pyx10
 import tw523
 
 
-MAX_FAILURES = 5
-EVENT_TIMEOUT = 1.5
-QUEUE_TIMEOUT = 0.25
+MAX_FAILURES = 5  # Maximum number of times a transmission can fail to be echoed properly
+EVENT_TIMEOUT = 5  # Maximum length of time we should wait for a transmission to be echoed
+QUEUE_TIMEOUT = 0.25  # Interval at which main thread should check if it's stopped
 
 I2C_BASE_ADDR = 0x58  # 'X' in ASCII
 
-IOCTL_I2C_TARGET = 0x0703
+IOCTL_I2C_TARGET = 0x0703  # From linux/i2c-dev.h
 
 
 InterfaceType = Enum('InterfaceType', ('PL513', 'TW523', 'XTB_523'))
 
 
+# Exceptions
+
+
 class EventSendFailure(Exception):
   """Exception raised when an event fails to send."""
+
+
+# Functions
 
 
 def bit_str_to_bytes(s):
@@ -46,6 +52,9 @@ def bit_str_to_bytes(s):
       bit_val = 128
       byte_pos += 1
   return bytes(b)
+
+
+# Classes
 
 
 class I2cAdapter(Thread):
@@ -94,7 +103,7 @@ class I2cAdapter(Thread):
 
 
 class TashTenHat(pyx10.X10Interface):
-  """Represents the TashTenHat accessed over i2c-dev."""
+  """Represents the TashTenHat accessed over i2c-dev.  Linux-specific."""
   
   def __init__(self, i2c_device, interface_type):
     super().__init__()
@@ -111,8 +120,12 @@ class TashTenHat(pyx10.X10Interface):
     """Send an outbound event to the TashTenHat."""
     
     for _ in range(MAX_FAILURES):
+      try:
+        bit_str = event.as_bit_str()
+      except AttributeError:
+        raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
       self._events_echo = Queue()
-      self._i2c.write(bit_str_to_bytes(event.as_bit_str()) + b'\x00')
+      self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
       if self._interface_type == InterfaceType.PL513:
         # PL513 is transmit-only, make no attempt to verify that events are echoed
         expected_events = deque()
