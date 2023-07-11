@@ -21,7 +21,7 @@ I2C_BASE_ADDR = 0x58  # 'X' in ASCII
 IOCTL_I2C_TARGET = 0x0703  # From linux/i2c-dev.h
 
 
-InterfaceType = Enum('InterfaceType', ('PL513', 'TW523', 'XTB_523'))
+InterfaceType = Enum('InterfaceType', ('PL513', 'TW523', 'XTB523', 'XTB523_ALLBITS'))
 
 
 # Exceptions
@@ -107,9 +107,12 @@ class TashTenHat(pyx10.X10Interface):
   
   def __init__(self, i2c_device, interface_type):
     super().__init__()
-    self._bep = tw523.BitEventProcessor(self._handle_event_in)
-    self._i2c = I2cAdapter(i2c_device, self._bep)
     self._interface_type = interface_type
+    self._bep = tw523.BitEventProcessor(
+      event_func=self._handle_event_in,
+      return_all_bits=True if self._interface_type == InterfaceType.XTB523_ALLBITS else False,
+    )
+    self._i2c = I2cAdapter(i2c_device, self._bep)
     self._events_echo = None
     self._shutdown = False
     self._stopped_event = Event()
@@ -130,10 +133,14 @@ class TashTenHat(pyx10.X10Interface):
         # PL513 is transmit-only, make no attempt to verify that events are echoed
         expected_events = deque()
       elif self._interface_type == InterfaceType.TW523:
-        # TW523 and PSC05 mangle/truncate certain events so we have to expect different ones than we transmit to be echoed
+        # TW523 and PSC05 mangle/truncate certain events so we may have to expect different ones than we transmit to be echoed
         expected_events = deque(event.tw523ify())
-      elif self._interface_type == InterfaceType.XTB_523:
-        # XTB-523 and XTB-IIR faithfully echo events as transmitted
+      elif self._interface_type == InterfaceType.XTB523:
+        # XTB-523 and XTB-IIR in normal mode treat relative dim events as doublets so we may have to expect different ones than we
+        # transmit to be echoed
+        expected_events = deque(event.xtb523ify())
+      elif self._interface_type == InterfaceType.XTB523_ALLBITS:
+        # XTB-523 and XTB-IIR in "return all bits" mode faithfully echo all bits as transmitted
         expected_events = deque((event,))
       else:
         raise ValueError('unrecognized interface type %s' % self._interface_type)
