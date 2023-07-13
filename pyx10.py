@@ -3,6 +3,7 @@
 
 from collections import deque
 from dataclasses import dataclass
+import logging
 from queue import Queue, Empty
 from threading import Thread, Event
 
@@ -273,7 +274,7 @@ class EventReaderThread(Thread):
         event = self._interface.get(timeout=0.25)
       except Empty:
         continue
-      print(event)
+      logging.info('inbound event: %s', event)
     self._stopped_event.set()
   
   def start(self):

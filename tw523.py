@@ -18,6 +18,7 @@ transmitted, including both halves of doublets.
 
 
 from collections import deque
+import logging
 
 import pyx10
 
@@ -162,10 +163,13 @@ class BitEventProcessor:
   def _process_frame(self):
     try:
       
+      log_frame = ''.join(self._bits)
+      logging.debug('processing frame: %s', log_frame)
+      
       if len(self._bits) % 2: self._bits.append('0')
       
       if len(self._bits) < 22:
-        # TODO emit a warning - frame too short
+        logging.warning('received frame is too short: %s', log_frame)
         return
       
       if self._return_all_bits:
@@ -177,7 +181,7 @@ class BitEventProcessor:
           self._bits = deque(one_copy)
           bit_copies = start_count
         else:
-          # TODO emit a warning - frame failed error check in "return all bits" mode
+          logging.warning('received frame failed error check: %s', log_frame)
           return
       else:
         bit_copies = 1
@@ -191,7 +195,7 @@ class BitEventProcessor:
         self._event_func(pyx10.X10AddressEvent(house_code=house_code, unit_code=key_code))
       
       elif not d16:  # unit address with extra bits that we don't understand and will ignore
-        # TODO emit a warning
+        logging.warning('unit address event with extra bits, ignoring: %s', log_frame)
         self._event_func(pyx10.X10AddressEvent(house_code=house_code, unit_code=key_code))
       
       elif d16 and key_code in (pyx10.X10_FN_DIM, pyx10.X10_FN_BRIGHT) and not self._bits:  # dim X10 function
@@ -217,7 +221,7 @@ class BitEventProcessor:
         self._event_func(pyx10.X10FunctionEvent(house_code=house_code, function=key_code))
       
       elif d16:  # X10 function with extra bits that we don't understand and will ignore
-        # TODO emit a warning
+        logging.warning('function event with extra bits, ignoring: %s', log_frame)
         self._event_func(pyx10.X10FunctionEvent(house_code=house_code, function=key_code))
       
     finally:

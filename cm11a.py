@@ -6,6 +6,7 @@ independently of its host (which these classes don't use anyway).
 
 
 from collections import deque
+import logging
 from queue import Queue, Empty
 from threading import Thread, Event
 import time
@@ -40,14 +41,6 @@ CM11A_READY_RESP = 0x55
 
 
 # Exceptions
-
-
-class NoResponseError(Exception):
-  """Exception raised when we timeout while waiting for an expected response from the CM11A."""
-
-
-class BadResponseError(Exception):
-  """Exception raised when the CM11A gives an unexpected response."""
 
 
 class InterruptedByPoll(Exception):
@@ -178,7 +171,8 @@ class CM11A(pyx10.X10Interface):
       try:
         response = self._serial.get(timeout=POLL_WAIT_TIME)  # If CM11A is polling, it might not respond immediately
       except Empty:
-        raise NoResponseError('no response to %s' % packet_desc)
+        logging.error('no response from CM11A to %s', packet_desc)
+        return
       if response == checksum: break
       if response in CM11A_POLL_BYTES:
         # If response is not our checksum but is one of the poll bytes, see if it gets sent again
@@ -189,22 +183,27 @@ class CM11A(pyx10.X10Interface):
             raise InterruptedByPoll(response)
           else:
             # If we got some other byte unprompted, something very weird is going on
-            raise BadResponseError('unprompted responses 0x%02X, 0x%02X sending %s' % (response, response2, packet_desc))
+            logging.error('unprompted responses 0x%02X, 0x%02X from CM11A sending %s', response, response2, packet_desc)
+            return
         except Empty:
           # If the byte was not repeated, it was just a bad checksum, so try sending the packet again
           pass
     else:
-      raise BadResponseError('too many bad checksum responses to %s' % packet_desc)
+      logging.error('too many bad checksum responses from CM11A to %s', packet_desc)
+      return
     self._serial.write(b'\x00')  # We got a good checksum response, so confirm to the interface to send the packet over X10
     try:
       response = self._serial.get(timeout=READY_TIMEOUT)
     except Empty:
-      raise BadResponseError('no ready response to %s after %s seconds' % (packet_desc, READY_TIMEOUT))
+      logging.error('no ready response from CM11A to %s after %s seconds', packet_desc, READY_TIMEOUT)
+      return
     if response in CM11A_POLL_BYTES and response == checksum:
       # If we got the same byte a second time, the first wasn't actually a good checksum, it was a poll
       # This works because CM11A_READY_RESP is not in CM11A_POLL_BYTES
       raise InterruptedByPoll(response)
-    if response != CM11A_READY_RESP: raise BadResponseError('bad ready response of 0x%02X after %s' % (response, packet_desc))
+    if response != CM11A_READY_RESP:
+      logging.error('bad ready response of 0x%02X from CM11A after %s', response, packet_desc)
+      return
     self._events_in.put(event)
   
   def _handle_poll_time(self):
@@ -222,12 +221,16 @@ class CM11A(pyx10.X10Interface):
     try:
       while (size := self._serial.get(timeout=SERIAL_TIMEOUT)) == CM11A_POLL_RECV: pass
     except Empty:
-      raise BadResponseError('size byte missing')
-    if not 2 <= size <= 9: raise BadResponseError('size byte 0x%02X is not between 2 and 9' % size)
+      logging.error('size byte missing from CM11A receive poll response')
+      return
+    if not 2 <= size <= 9:
+      logging.error('size byte 0x%02X from CM11A receive poll response is not between 2 and 9', size)
+      return
     try:
       func_mask = self._serial.get(timeout=SERIAL_TIMEOUT)
     except Empty:
-      raise BadResponseError('address/function mask missing')
+      logging.error('address/function mask missing from CM11A receive poll response')
+      return
     size -= 1
     recv_bytes = deque()
     byte_idx = 0
@@ -235,7 +238,8 @@ class CM11A(pyx10.X10Interface):
       try:
         byte = self._serial.get(timeout=SERIAL_TIMEOUT)
       except Empty:
-        raise BadResponseError('byte %d of received data missing' % byte_idx)
+        logging.error('byte %d of received data missing from CM11A receive poll response', byte_idx)
+        return
       recv_bytes.append((byte, True if func_mask & 0x1 else False))
       func_mask >>= 1
       byte_idx += 1
@@ -267,8 +271,9 @@ class CM11A(pyx10.X10Interface):
             ))
           else:
             self._events_in.put(pyx10.X10FunctionEvent(house_code=byte >> 4, function=byte & 0xF))
-        except IndexError as e:
-          raise BadResponseError('argument byte missing after function byte 0x%02X' % byte) from e
+        except IndexError:
+          logging.error('argument byte missing from CM11A receive poll response after function byte 0x%02X', byte)
+          return
       else:  # address
         self._events_in.put(pyx10.X10AddressEvent(house_code=byte >> 4, unit_code=byte & 0xF))
   
@@ -280,7 +285,7 @@ class CM11A(pyx10.X10Interface):
     elif poll_byte == CM11A_POLL_RECV:
       self._handle_poll_receive()
     else:
-      raise BadResponseError('unrecognized poll byte 0x%02X' % poll_byte)
+      logging.error('unrecognized poll byte 0x%02X from CM11A', poll_byte)
   
   # Threading
   

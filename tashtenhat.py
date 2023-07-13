@@ -4,6 +4,7 @@
 from collections import deque
 from enum import Enum
 from fcntl import ioctl
+import logging
 import os
 from queue import Queue, Empty
 from threading import Thread, Event
@@ -22,13 +23,6 @@ IOCTL_I2C_TARGET = 0x0703  # From linux/i2c-dev.h
 
 
 InterfaceType = Enum('InterfaceType', ('PL513', 'TW523', 'XTB523', 'XTB523_ALLBITS'))
-
-
-# Exceptions
-
-
-class EventSendFailure(Exception):
-  """Exception raised when an event fails to send."""
 
 
 # Functions
@@ -149,10 +143,10 @@ class TashTenHat(pyx10.X10Interface):
           next_event = self._events_echo.get(timeout=EVENT_TIMEOUT)
         except Empty:
           break
-        if next_event == expected_events[0]: expected_events.popleft()
+        if next_event.as_bit_str() == expected_events[0].as_bit_str(): expected_events.popleft()
       if not expected_events: break
     else:
-      raise EventSendFailure('failed to send %s after %d attempts' % (event, MAX_FAILURES))
+      logging.error('failed to send %s after %d attempts', event, MAX_FAILURES)
     self._events_echo = None
   
   def _handle_event_in(self, event):
