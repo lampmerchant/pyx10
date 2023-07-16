@@ -1,2 +1,1 @@
-from .common import *
-from . import interface
+from .app import run
