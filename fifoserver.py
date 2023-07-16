@@ -6,9 +6,7 @@ import logging
 import re
 import sys
 
-import cm11a
 import pyx10
-import tashtenhat
 
 
 class CommandProcessor:
@@ -32,7 +30,7 @@ class CommandProcessor:
   
   def __init__(self, intf):
     self._intf = intf
-    self._house_code = 'A'
+    self._house_code = pyx10.X10_HOUSE_CODES['A']
   
   def command(self, cmd_str):
     """Parse a command string."""
@@ -44,7 +42,9 @@ class CommandProcessor:
       if m := self.REO_TARGET.match(cmd):
         house, unit = m.groups()
         if house: self._house_code = pyx10.X10_HOUSE_CODES[house]
-        if unit: self._intf.put(pyx10.X10AddressEvent(house_code=self._house_code, unit_code=pyx10.X10_UNIT_CODES[int(unit)]))
+        if unit: self._intf.put(
+          pyx10.X10AddressEvent(house_code=self._house_code, unit_code=pyx10.X10_UNIT_CODES[int(unit)])
+        )
       elif (s := cmd.replace('-', '').replace('_', '')) in self.SIMPLE_COMMANDS:
         self._intf.put(pyx10.X10FunctionEvent(house_code=self._house_code, function=self.SIMPLE_COMMANDS[s]))
       elif m := self.REO_REL_DIM.match(cmd):
@@ -74,15 +74,15 @@ def main(argv):
   )
   
   if args.cm11a:
-    intf = cm11a.CM11A(args.cm11a)
+    intf = pyx10.interface.cm11a.CM11A(args.cm11a)
   elif args.pl513:
-    intf = tashtenhat.TashTenHat(args.pl513, tashtenhat.InterfaceType.PL513)
+    intf = pyx10.interface.tashtenhat.TashTenHatWithPl513(args.pl513)
   elif args.tw523:
-    intf = tashtenhat.TashTenHat(args.tw523, tashtenhat.InterfaceType.TW523)
+    intf = pyx10.interface.tashtenhat.TashTenHatWithTw523(args.tw523)
   elif args.xtb523:
-    intf = tashtenhat.TashTenHat(args.xtb523, tashtenhat.InterfaceType.XTB523)
+    intf = pyx10.interface.tashtenhat.TashTenHatWithXtb523(args.xtb523)
   elif args.xtb523ab:
-    intf = tashtenhat.TashTenHat(args.xtb523ab, tashtenhat.InterfaceType.XTB523_ALLBITS)
+    intf = pyx10.interface.tashtenhat.TashTenHatWithXtb523AllBits(args.xtb523ab)
   else:
     raise ValueError('no valid interface specified')
   

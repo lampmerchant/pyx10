@@ -13,7 +13,9 @@ import time
 
 import serial
 
-import pyx10
+from ..common import X10AddressEvent, X10FunctionEvent, X10RelativeDimEvent, X10AbsoluteDimEvent, X10ExtendedCodeEvent
+from ..common import X10_FN_DIM, X10_FN_BRIGHT, X10_FN_PRESET_DIM_0, X10_FN_PRESET_DIM_1, X10_FN_EXT_CODE
+from ..common import X10Interface, MultiQueueGetter
 
 
 # CM11A notes:
@@ -59,7 +61,7 @@ def X10AddressEvent_as_cm11a_packet(self):
   
   return bytes((0x04, (self.house_code & 0xF) << 4 | (self.unit_code & 0xF)))
 
-pyx10.X10AddressEvent.as_cm11a_packet = X10AddressEvent_as_cm11a_packet
+X10AddressEvent.as_cm11a_packet = X10AddressEvent_as_cm11a_packet
 
 
 def X10FunctionEvent_as_cm11a_packet(self):
@@ -67,7 +69,7 @@ def X10FunctionEvent_as_cm11a_packet(self):
   
   return bytes((0x06, (self.house_code & 0xF) << 4 | (self.function & 0xF)))
 
-pyx10.X10FunctionEvent.as_cm11a_packet = X10FunctionEvent_as_cm11a_packet
+X10FunctionEvent.as_cm11a_packet = X10FunctionEvent_as_cm11a_packet
 
 
 def X10RelativeDimEvent_as_cm11a_packet(self):
@@ -75,19 +77,19 @@ def X10RelativeDimEvent_as_cm11a_packet(self):
   
   return bytes((
     0x06 | (int(abs(self.dim) * 22) & 0x1F) << 3,
-    (self.house_code & 0xF) << 4 | (pyx10.X10_FN_DIM if self.dim < 0 else pyx10.X10_FN_BRIGHT)
+    (self.house_code & 0xF) << 4 | (X10_FN_DIM if self.dim < 0 else X10_FN_BRIGHT)
   ))
 
-pyx10.X10RelativeDimEvent.as_cm11a_packet = X10RelativeDimEvent_as_cm11a_packet
+X10RelativeDimEvent.as_cm11a_packet = X10RelativeDimEvent_as_cm11a_packet
 
 
 def X10AbsoluteDimEvent_as_cm11a_packet(self):
   """Convert this event into a packet for the CM11A."""
   
   dim = int(self.dim * 31)
-  return bytes((0x06, (dim & 0xF) << 4 | (pyx10.X10_FN_PRESET_DIM_1 if dim & 0x10 else pyx10.X10_FN_PRESET_DIM_0)))
+  return bytes((0x06, (dim & 0xF) << 4 | (X10_FN_PRESET_DIM_1 if dim & 0x10 else X10_FN_PRESET_DIM_0)))
 
-pyx10.X10AbsoluteDimEvent.as_cm11a_packet = X10AbsoluteDimEvent_as_cm11a_packet
+X10AbsoluteDimEvent.as_cm11a_packet = X10AbsoluteDimEvent_as_cm11a_packet
 
 
 def X10ExtendedCodeEvent_as_cm11a_packet(self):
@@ -95,13 +97,13 @@ def X10ExtendedCodeEvent_as_cm11a_packet(self):
   
   return bytes((
     0x07,
-    (self.house_code & 0xF) << 4 | pyx10.X10_FN_EXT_CODE,
+    (self.house_code & 0xF) << 4 | X10_FN_EXT_CODE,
     self.unit_code & 0xF,
     self.data_byte & 0xFF,
     self.cmd_byte & 0xFF,
   ))
 
-pyx10.X10ExtendedCodeEvent.as_cm11a_packet = X10ExtendedCodeEvent_as_cm11a_packet
+X10ExtendedCodeEvent.as_cm11a_packet = X10ExtendedCodeEvent_as_cm11a_packet
 
 
 # Classes
@@ -146,7 +148,7 @@ class SerialAdapter(Thread, Queue):
     self._stopped_event.wait()
 
 
-class CM11A(pyx10.X10Interface):
+class CM11A(X10Interface):
   """Represents the CM11A, queueing events that it detects on the line and allowing it to put events on the line."""
   
   def __init__(self, serial_port):
@@ -248,34 +250,34 @@ class CM11A(pyx10.X10Interface):
       byte, is_func = recv_bytes.popleft()
       if is_func:  # function
         try:
-          if byte & 0xF == pyx10.X10_FN_DIM:
+          if byte & 0xF == X10_FN_DIM:
             dim_byte, _ = recv_bytes.popleft()
-            self._events_in.put(pyx10.X10RelativeDimEvent(house_code=byte >> 4, dim=-dim_byte / 210))
-          elif byte & 0xF == pyx10.X10_FN_BRIGHT:
+            self._events_in.put(X10RelativeDimEvent(house_code=byte >> 4, dim=-dim_byte / 210))
+          elif byte & 0xF == X10_FN_BRIGHT:
             dim_byte, _ = recv_bytes.popleft()
-            self._events_in.put(pyx10.X10RelativeDimEvent(house_code=byte >> 4, dim=dim_byte / 210))
-          elif byte & 0xF == pyx10.X10_FN_PRESET_DIM_0:
-            self._events_in.put(pyx10.X10AbsoluteDimEvent(dim=(byte >> 4) / 31))
-          elif byte & 0xF == pyx10.X10_FN_PRESET_DIM_1:
-            self._events_in.put(pyx10.X10AbsoluteDimEvent(dim=(16 + (byte >> 4)) / 31))
-          elif byte & 0xF == pyx10.X10_FN_EXT_CODE:
+            self._events_in.put(X10RelativeDimEvent(house_code=byte >> 4, dim=dim_byte / 210))
+          elif byte & 0xF == X10_FN_PRESET_DIM_0:
+            self._events_in.put(X10AbsoluteDimEvent(dim=(byte >> 4) / 31))
+          elif byte & 0xF == X10_FN_PRESET_DIM_1:
+            self._events_in.put(X10AbsoluteDimEvent(dim=(16 + (byte >> 4)) / 31))
+          elif byte & 0xF == X10_FN_EXT_CODE:
             unit_code, _ = recv_bytes.popleft()
             unit_code &= 0x0F
             data_byte, _ = recv_bytes.popleft()
             cmd_byte, _ = recv_bytes.popleft()
-            self._events_in.put(pyx10.X10ExtendedCodeEvent(
+            self._events_in.put(X10ExtendedCodeEvent(
               house_code=byte >> 4,
               unit_code=unit_code,
               data_byte=data_byte,
               cmd_byte=cmd_byte
             ))
           else:
-            self._events_in.put(pyx10.X10FunctionEvent(house_code=byte >> 4, function=byte & 0xF))
+            self._events_in.put(X10FunctionEvent(house_code=byte >> 4, function=byte & 0xF))
         except IndexError:
           logging.error('argument byte missing from CM11A receive poll response after function byte 0x%02X', byte)
           return
       else:  # address
-        self._events_in.put(pyx10.X10AddressEvent(house_code=byte >> 4, unit_code=byte & 0xF))
+        self._events_in.put(X10AddressEvent(house_code=byte >> 4, unit_code=byte & 0xF))
   
   def _handle_poll(self, poll_byte):
     """Handle the CM11A polling for service."""
@@ -292,7 +294,7 @@ class CM11A(pyx10.X10Interface):
   def run(self):
     """Main thread.  Handle polls from the CM11A and events for the CM11A."""
     
-    mqg = pyx10.MultiQueueGetter(self._serial, self._events_out)
+    mqg = MultiQueueGetter(self._serial, self._events_out)
     mqg.start()
     while not self._shutdown:
       try:
