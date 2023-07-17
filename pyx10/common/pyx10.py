@@ -3,8 +3,7 @@
 
 from collections import deque
 from dataclasses import dataclass
-import logging
-from queue import Queue, Empty
+from queue import Queue
 from threading import Thread, Event
 
 
@@ -255,37 +254,3 @@ class X10Interface(Thread):
     """Create and return an X10Controller for this interface and the given house letter."""
     
     return X10Controller(house_letter=house_letter, put_function=self.put)
-
-
-class EventReaderThread(Thread):
-  """Simple thread to report on inbound events to an X10 interface."""
-  
-  def __init__(self, interface):
-    super().__init__()
-    self._interface = interface
-    self._shutdown = False
-    self._stopped_event = Event()
-  
-  def run(self):
-    """Thread.  Read events from the given interface and dump them to stdout."""
-    
-    while not self._shutdown:
-      try:
-        event = self._interface.get(timeout=0.25)
-      except Empty:
-        continue
-      logging.info('inbound event: %s', event)
-    self._stopped_event.set()
-  
-  def start(self):
-    """Start thread."""
-    
-    self._shutdown = False
-    self._stopped_event.clear()
-    super().start()
-  
-  def stop(self):
-    """Stop thread.  Blocks until thread is stopped."""
-    
-    self._shutdown = True
-    self._stopped_event.wait()

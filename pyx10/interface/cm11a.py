@@ -16,6 +16,7 @@ import serial
 from ..common import X10AddressEvent, X10FunctionEvent, X10RelativeDimEvent, X10AbsoluteDimEvent, X10ExtendedCodeEvent
 from ..common import X10_FN_DIM, X10_FN_BRIGHT, X10_FN_PRESET_DIM_0, X10_FN_PRESET_DIM_1, X10_FN_EXT_CODE
 from ..common import X10Interface, MultiQueueGetter
+from .registry import register_interface
 
 
 # CM11A notes:
@@ -148,6 +149,7 @@ class SerialAdapter(Thread, Queue):
     self._stopped_event.wait()
 
 
+@register_interface('cm11a', ('*serial_port',))
 class CM11A(X10Interface):
   """Represents the CM11A, queueing events that it detects on the line and allowing it to put events on the line."""
   

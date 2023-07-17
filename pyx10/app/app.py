@@ -1,8 +1,10 @@
 """Functions to run an event-based X10 app."""
 
 
-from argparse import ArgumentParser
+from configparser import ConfigParser
+import inspect
 import logging
+import os
 import re
 import sys
 from queue import Empty
@@ -13,10 +15,11 @@ from ..common import X10_FN_ALL_OFF, X10_FN_ALL_LIGHTS_ON, X10_FN_ALL_LIGHTS_OFF
 from ..common import X10_FN_ON, X10_FN_OFF, X10_FN_STATUS_REQ, X10_HOUSE_CODES_REV, X10_UNIT_CODES_REV
 from ..common import X10_FN_DIM, X10_FN_BRIGHT, X10_HOUSE_CODES, X10_UNIT_CODES
 from ..common import X10AddressEvent, X10FunctionEvent, X10RelativeDimEvent, X10AbsoluteDimEvent, X10ExtendedCodeEvent
-from ..interface import cm11a, tashtenhat
+from ..interface import get_interface
 
 
 QUEUE_TIMEOUT = 0.25  # Interval at which app thread should check if it's stopped
+POSSIBLE_CONFIG_LOCATIONS = ('~/.pyx10.ini', '~/pyx10.ini', '/etc/pyx10.ini')
 
 
 # Monkey patches for X10 event classes
@@ -194,47 +197,61 @@ class EventDispatcher(Thread):
 # Functions
 
 
-def run(module, description):
+def run(module=None):
   """Run an event-based X10 app out of the given module."""
   
-  parser = ArgumentParser(description=description)
-  intf_group = parser.add_mutually_exclusive_group(required=True)
-  intf_group.add_argument('--cm11a', metavar='SERIALDEV', help='serial device where CM11A is connected')
-  intf_group.add_argument('--pl513', metavar='I2CDEV', help='I2C device where TashTenHat is connected to PL513')
-  intf_group.add_argument('--tw523', metavar='I2CDEV', help='I2C device where TashTenHat is connected to TW523/PSC05')
-  intf_group.add_argument('--xtb523', metavar='I2CDEV', help='I2C device where TashTenHat is connected to XTB-523/XTB-IIR')
-  intf_group.add_argument('--xtb523ab', metavar='I2CDEV', help='I2C device where TashTenHat is connected to XTB-523/XTB-IIR in'
-                                                               ' "return all bits" mode')
-  parser.add_argument('-v', '--verbose', action='count', default=0, help='verbosity of output, can be given multiple times')
-  parser.add_argument('-f', '--fifo_path', help='filesystem path to a named FIFO that should accept commands (must already exist)')
-  args = parser.parse_args(sys.argv[1:])
+  # This is a bit unholy, but it allows us to get a reference to the calling module
+  if module is None: module = inspect.getmodule(inspect.currentframe().f_back)
   
-  logging.basicConfig(
-    format='%(asctime)s %(levelname)s %(message)s',
-    level=logging.DEBUG if args.verbose >= 2 else logging.INFO if args.verbose >= 1 else logging.WARNING,
-  )
-  
-  if args.cm11a:
-    intf = cm11a.CM11A(args.cm11a)
-  elif args.pl513:
-    intf = tashtenhat.TashTenHatWithPl513(args.pl513)
-  elif args.tw523:
-    intf = tashtenhat.TashTenHatWithTw523(args.tw523)
-  elif args.xtb523:
-    intf = tashtenhat.TashTenHatWithXtb523(args.xtb523)
-  elif args.xtb523ab:
-    intf = tashtenhat.TashTenHatWithXtb523AllBits(args.xtb523ab)
+  # Find and read config file
+  source_file_location = inspect.getsourcefile(module)
+  if source_file_location is not None: source_file_location = os.path.dirname(source_file_location)
+  possible_config_locations = []
+  for possible_config_location in POSSIBLE_CONFIG_LOCATIONS:
+    if possible_config_location.startswith('~/'):
+      if source_file_location is not None:
+        possible_config_locations.append(os.path.join(source_file_location, possible_config_location[2:]))
+      possible_config_locations.append(os.path.expanduser(possible_config_location))
+    else:
+      possible_config_locations.append(possible_config_location)
+  config = ConfigParser()
+  for config_location in possible_config_locations:
+    if os.path.exists(config_location):
+      config.read(config_location)
+      break
   else:
-    raise ValueError('no valid interface specified')
+    raise FileNotFoundError('config file not found at any expected location: %s' % ', '.join(possible_config_locations))
   
+  # interface section
+  if 'interface' not in config: raise ValueError('config file at %s is missing "interface" section' % config_location)
+  intf = get_interface(config['interface'])
+  
+  # log section
+  log_level_mapping = logging.getLevelNamesMapping()
+  log_level = logging.WARNING
+  if 'log' in config:
+    if 'level' in config['log']:
+      if config['log']['level'] not in log_level_mapping:
+        raise ValueError('log level "%s" is not one of: %s' % (config['log']['level'], ', '.join(log_level_mapping)))
+      log_level = log_level_mapping[config['log']['level']]
+  logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=log_level)
+  
+  # fifo_server section
+  fifo_path = None
+  if 'fifo_server' in config:
+    if 'path' in config['fifo_server']:
+      fifo_path = config['fifo_server']['path']
+      if not os.path.exists(fifo_path): raise FileNotFoundError('FIFO at "%s" does not exist' % fifo_path)
+  
+  # Run the app
   dispatcher = EventDispatcher(module, intf)
   intf.start()
   dispatcher.start()
   command_processor = CommandProcessor(intf)
   try:
     while True:
-      if args.fifo_path:
-        with open(args.fifo_path, 'r') as fifo:
+      if fifo_path:
+        with open(fifo_path, 'r') as fifo:
           while line := fifo.readline():
             command_processor.command(line.strip())
       else:

@@ -2,7 +2,6 @@
 
 
 import pyx10
-import sys
 
 
 def x10_d3_on(intf):
@@ -21,4 +20,4 @@ def x10_d4_off(intf):
   intf.get_controller('D').off(2)
 
 
-pyx10.run(sys.modules[__name__], 'Example pyx10 event-based app.')
+pyx10.run()

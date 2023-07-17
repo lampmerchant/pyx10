@@ -9,8 +9,9 @@ import os
 from queue import Queue, Empty
 from threading import Thread, Event, Lock
 
-from ..common import X10Interface
 from . import tw523
+from ..common import X10Interface
+from .registry import register_interface
 
 
 MAX_FAILURES = 5  # Maximum number of times a transmission can fail to be echoed properly
@@ -173,6 +174,7 @@ class TashTenHat(X10Interface):
     self._stopped_event.wait()
 
 
+@register_interface('tashtenhat_pl513', ('*i2c_device',))
 class TashTenHatWithPl513(TashTenHat):
   """Represents the TashTenHat, connected to a PL513, accessed over i2c-dev."""
   
@@ -191,6 +193,7 @@ class TashTenHatWithPl513(TashTenHat):
     self._events_in.put(event)  # Local echo is the only source of inbound events from the PL513
 
 
+@register_interface('tashtenhat_tw523', ('*i2c_device',))
 class TashTenHatWithTw523(TashTenHat):
   """Represents the TashTenHat, connected to a TW523, accessed over i2c-dev."""
   
@@ -222,6 +225,7 @@ class TashTenHatWithTw523(TashTenHat):
       logging.error('failed to send %s after %d attempts', event, MAX_FAILURES)
 
 
+@register_interface('tashtenhat_xtb523', ('*i2c_device',))
 class TashTenHatWithXtb523(TashTenHat):
   """Represents the TashTenHat, connected to an XTB-523 in normal mode, accessed over i2c-dev."""
   
@@ -253,6 +257,7 @@ class TashTenHatWithXtb523(TashTenHat):
       logging.error('failed to send %s after %d attempts', event, MAX_FAILURES)
 
 
+@register_interface('tashtenhat_xtb523allbits', ('*i2c_device',))
 class TashTenHatWithXtb523AllBits(TashTenHat):
   """Represents the TashTenHat, connected to an XTB-523 in Return All Bits mode, accessed over i2c-dev."""
   
