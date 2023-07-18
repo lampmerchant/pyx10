@@ -141,6 +141,7 @@ class CommandProcessor:
   }
   REO_REL_DIM = re.compile(r'^DIM\(([+-](?:0*100|0*\d{1,2}))%?\)$')
   REO_ABS_DIM = re.compile(r'^DIM\((0*100|0*\d{1,2})%?\)$')
+  REO_EXT_CODE = re.compile(r'^EXT[_-]?CODE\((0*1[0-6]|0*[1-9]),(?:0X)?([0-9A-F]{1,2})H?(?:,(?:0[Xx])?([0-9A-F]{1,2})H?)\)$')
   
   def __init__(self, intf):
     self._intf = intf
@@ -156,15 +157,23 @@ class CommandProcessor:
       if m := self.REO_TARGET.match(cmd):
         house, unit = m.groups()
         if house: self._house_code = X10_HOUSE_CODES[house]
-        if unit: self._intf.put(
-          X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[int(unit)])
-        )
+        if unit: self._intf.put(X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[int(unit)]))
       elif (s := cmd.replace('-', '').replace('_', '')) in self.SIMPLE_COMMANDS:
         self._intf.put(X10FunctionEvent(house_code=self._house_code, function=self.SIMPLE_COMMANDS[s]))
       elif m := self.REO_REL_DIM.match(cmd):
         self._intf.put(X10RelativeDimEvent(house_code=self._house_code, dim=int(m.group(1)) / 100))
       elif m := self.REO_ABS_DIM.match(cmd):
         self._intf.put(X10AbsoluteDimEvent(dim=int(m.group(1)) / 100))
+      elif m := self.REO_EXT_CODE.match(cmd):
+        unit_num, first, second = m.groups()
+        first = int(first, 16)
+        second = int(second, 16) if second is not None else None
+        self._intf.put(X10ExtendedCodeEvent(
+          house_code=self._house_code,
+          unit_code=X10_UNIT_CODES[int(unit_num)],
+          data_byte=0 if second is None else first,
+          cmd_byte=first if second is None else second,
+        ))
       else:
         logging.warning('invalid command: %s', cmd)
 

@@ -13,7 +13,8 @@ XTB-523 and XTB-IIR from JV Digital Engineering receive transmissions of any len
 transmission in a doublet when in normal mode, meaning they skip every other dim transmission in a sequence.  The
 'as_xtb523_echo_bit_str' functions are provided to convert X10 event objects into the bits that XTB-523 and XTB-IIR will echo back
 when in normal mode so that transmissions using these transceivers can be verified.  In "return all bits" mode, XTB-523 and XTB-IIR
-receive all bits as transmitted, including both halves of doublets.
+receive all bits as transmitted, including both halves of doublets.  Note that in this mode, XTB-523 and XTB-IIR do not seem to
+echo extended code commands correctly even though they are transmitted correctly.
 """
 
 
