@@ -108,50 +108,63 @@ X10AbsoluteDimEvent.as_bit_str = X10Event_as_bit_str
 X10ExtendedCodeEvent.as_bit_str = X10Event_as_bit_str
 
 
-def X10Event_as_tw523_echo_bit_str(self):
+def X10Event_as_tw523_echo_bit_str_and_qty(self):
   """Return the bit string that will be echoed by a real TW523/PSC05 (not an XTB-523 or XTB-IIR) when sending this event."""
   bit_str, _ = self.as_bit_str_and_qty()
-  return bit_str
+  return bit_str, 1
 
-X10AddressEvent.as_tw523_echo_bit_str = X10Event_as_tw523_echo_bit_str
-X10FunctionEvent.as_tw523_echo_bit_str = X10Event_as_tw523_echo_bit_str
-X10AbsoluteDimEvent.as_tw523_echo_bit_str = X10Event_as_tw523_echo_bit_str
+X10AddressEvent.as_tw523_echo_bit_str_and_qty = X10Event_as_tw523_echo_bit_str_and_qty
+X10FunctionEvent.as_tw523_echo_bit_str_and_qty = X10Event_as_tw523_echo_bit_str_and_qty
+X10AbsoluteDimEvent.as_tw523_echo_bit_str_and_qty = X10Event_as_tw523_echo_bit_str_and_qty
 
 
-def X10RelativeDimEvent_as_tw523_echo_bit_str(self):
+def X10RelativeDimEvent_as_tw523_echo_bit_str_and_qty(self):
   """Return the bit string that will be echoed by a real TW523/PSC05 (not an XTB-523 or XTB-IIR) when sending this event."""
   bit_str, qty = self.as_bit_str_and_qty()
-  return bit_str * ((2 + qty) // 3)
+  return bit_str, (2 + qty) // 3
 
-X10RelativeDimEvent.as_tw523_echo_bit_str = X10RelativeDimEvent_as_tw523_echo_bit_str
+X10RelativeDimEvent.as_tw523_echo_bit_str_and_qty = X10RelativeDimEvent_as_tw523_echo_bit_str_and_qty
 
 
-def X10ExtendedCodeEvent_as_tw523_echo_bit_str(self):
+def X10ExtendedCodeEvent_as_tw523_echo_bit_str_and_qty(self):
   """Return the bit string that will be echoed by a real TW523/PSC05 (not an XTB-523 or XTB-IIR) when sending this event."""
   bit_str, _ = self.as_bit_str_and_qty()
   # TW523 will return this twice because we send it twice and it doesn't know about the extra bits
-  return bit_str * 2
+  return bit_str, 2
 
-X10ExtendedCodeEvent.as_tw523_echo_bit_str = X10ExtendedCodeEvent_as_tw523_echo_bit_str
+X10ExtendedCodeEvent.as_tw523_echo_bit_str_and_qty = X10ExtendedCodeEvent_as_tw523_echo_bit_str_and_qty
 
 
-def X10Event_as_xtb523_echo_bit_str(self):
+def X10Event_as_xtb523_echo_bit_str_and_qty(self):
   """Return the bit string that will be echoed by an XTB-523 or XTB-IIR (in normal mode) when sending this event."""
   bit_str, _ = self.as_bit_str_and_qty()
-  return bit_str
+  return bit_str, 1
 
-X10AddressEvent.as_xtb523_echo_bit_str = X10Event_as_xtb523_echo_bit_str
-X10FunctionEvent.as_xtb523_echo_bit_str = X10Event_as_xtb523_echo_bit_str
-X10AbsoluteDimEvent.as_xtb523_echo_bit_str = X10Event_as_xtb523_echo_bit_str
-X10ExtendedCodeEvent.as_xtb523_echo_bit_str = X10Event_as_xtb523_echo_bit_str
+X10AddressEvent.as_xtb523_echo_bit_str_and_qty = X10Event_as_xtb523_echo_bit_str_and_qty
+X10FunctionEvent.as_xtb523_echo_bit_str_and_qty = X10Event_as_xtb523_echo_bit_str_and_qty
+X10AbsoluteDimEvent.as_xtb523_echo_bit_str_and_qty = X10Event_as_xtb523_echo_bit_str_and_qty
+X10ExtendedCodeEvent.as_xtb523_echo_bit_str_and_qty = X10Event_as_xtb523_echo_bit_str_and_qty
 
 
-def X10RelativeDimEvent_as_xtb523_echo_bit_str(self):
+def X10RelativeDimEvent_as_xtb523_echo_bit_str_and_qty(self):
   """Return the bit string that will be echoed by an XTB-523 or XTB-IIR (in normal mode) when sending this event."""
   bit_str, qty = self.as_bit_str_and_qty()
-  return bit_str * ((1 + qty) // 2)
+  return bit_str, (1 + qty) // 2
 
-X10RelativeDimEvent.as_xtb523_echo_bit_str = X10RelativeDimEvent_as_xtb523_echo_bit_str
+X10RelativeDimEvent.as_xtb523_echo_bit_str_and_qty = X10RelativeDimEvent_as_xtb523_echo_bit_str_and_qty
+
+
+def X10Event_as_xtb523allbits_echo_bit_str_and_qty(self):
+  """Return the bit string that will be echoed by an XTB-523 or XTB-IIR (in "return all bits" mode) when sending this event."""
+  bit_str, qty = self.as_bit_str_and_qty()
+  if len(bit_str) % 2: bit_str += '0'
+  return ''.join(bit_str for i in range(qty)) + ('111' if qty % 2 else ''), 1
+
+X10AddressEvent.as_xtb523allbits_echo_bit_str_and_qty = X10Event_as_xtb523allbits_echo_bit_str_and_qty
+X10FunctionEvent.as_xtb523allbits_echo_bit_str_and_qty = X10Event_as_xtb523allbits_echo_bit_str_and_qty
+X10RelativeDimEvent.as_xtb523allbits_echo_bit_str_and_qty = X10Event_as_xtb523allbits_echo_bit_str_and_qty
+X10AbsoluteDimEvent.as_xtb523allbits_echo_bit_str_and_qty = X10Event_as_xtb523allbits_echo_bit_str_and_qty
+X10ExtendedCodeEvent.as_xtb523allbits_echo_bit_str_and_qty = X10Event_as_xtb523allbits_echo_bit_str_and_qty
 
 
 # Classes

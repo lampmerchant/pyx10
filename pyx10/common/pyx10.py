@@ -35,7 +35,7 @@ X10_FN_CODE_REV = {
 # xtdcode.pdf calls extended data "extended code 2", preset dim 0 "extended code 3", and preset dim 1 "unused", but it seems like
 # these were part of an intended standard which never actually made it into products.
 
-RELATIVE_DIM_STEPS = 22
+RELATIVE_DIM_STEPS = 22  # Number of relative steps that separate a dim level of 0% from a dim level of 100%
 
 
 @dataclass

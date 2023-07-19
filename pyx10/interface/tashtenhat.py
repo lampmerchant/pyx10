@@ -17,6 +17,7 @@ from .registry import register_interface
 MAX_FAILURES = 5  # Maximum number of times a transmission can fail to be echoed properly
 ECHO_TIMEOUT = 5  # Maximum length of time we should wait for a transmission to be echoed
 QUEUE_TIMEOUT = 0.25  # Interval at which main thread should check if it's stopped
+INTERFRAME_ZEROES = 6  # Nominal number of zeroes that separate frames
 
 I2C_BASE_ADDR = 0x58  # 'X' in ASCII
 
@@ -52,9 +53,12 @@ def bit_str_to_bytes(s):
 class BitStringMatcher:
   """A device to attempt to match a stream of incoming bits from TashTenHat with an expected stream."""
   
-  def __init__(self, expected_bit_str, passthrough_feed_bit):
-    self._expected_bits = deque((1 if i == '1' else 0) for i in expected_bit_str)
+  def __init__(self, expected_bit_str, expected_qty, passthrough_feed_bit):
+    self._expected_bits = deque((1 if i == '1' else 0)
+                                for i in (INTERFRAME_ZEROES * '0').join(expected_bit_str.strip('0') for j in range(expected_qty)))
+    self._matching_bits = deque()
     self._held_bits = deque()
+    self._zeroes = 0
     self._passthrough_feed_bit = passthrough_feed_bit
     self._event = Event()
     self._lock = Lock()
@@ -77,9 +81,14 @@ class BitStringMatcher:
         self._passthrough_feed_bit(bit)
       else:
         self._held_bits.append(bit)
-        while len(self._held_bits) > len(self._expected_bits): self._passthrough_feed_bit(self._held_bits.popleft())
-        if len(self._held_bits) == len(self._expected_bits):
-          if self._held_bits == self._expected_bits: self._event.set()
+        if bit:
+          self._zeroes = 0
+        else:
+          self._zeroes += 1
+          if self._zeroes > INTERFRAME_ZEROES: return
+        self._matching_bits.append(bit)
+        if len(self._matching_bits) == len(self._expected_bits):
+          if self._matching_bits == self._expected_bits: self._event.set()
   
   def wait(self, timeout):
     """Wait for a match.  Return True if there was a match within the timeout, else False and pass the held bits through."""
@@ -204,7 +213,7 @@ class TashTenHatWithTw523(TashTenHat):
       dim_func=lambda dim_quantity: dim_quantity * 3 - 1,
       return_all_bits=False,
     )
-    self._bsm = BitStringMatcher('0', self._bep.feed_bit)
+    self._bsm = BitStringMatcher('0', 1, self._bep.feed_bit)
     self._i2c = I2cAdapter(i2c_device, lambda byte: self._bsm.feed_byte(byte))
   
   def _handle_event_out(self, event):
@@ -216,7 +225,8 @@ class TashTenHatWithTw523(TashTenHat):
       except AttributeError:
         raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
       # Expect different echoed bits because TW523 and PSC05 mangle/truncate certain events
-      self._bsm = BitStringMatcher(event.as_tw523_echo_bit_str(), self._bep.feed_bit)
+      echo_bit_str, echo_qty = event.as_tw523_echo_bit_str_and_qty()
+      self._bsm = BitStringMatcher(echo_bit_str, echo_qty, self._bep.feed_bit)
       self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
       if self._bsm.wait(ECHO_TIMEOUT):
         self._events_in.put(event)
@@ -236,7 +246,7 @@ class TashTenHatWithXtb523(TashTenHat):
       dim_func=lambda dim_quantity: dim_quantity * 2,
       return_all_bits=False,
     )
-    self._bsm = BitStringMatcher('0', self._bep.feed_bit)
+    self._bsm = BitStringMatcher('0', 1, self._bep.feed_bit)
     self._i2c = I2cAdapter(i2c_device, lambda byte: self._bsm.feed_byte(byte))
   
   def _handle_event_out(self, event):
@@ -248,7 +258,8 @@ class TashTenHatWithXtb523(TashTenHat):
       except AttributeError:
         raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
       # Expect different echoed bits because XTB-523 in normal mode treats all events as doublets and returns only one half
-      self._bsm = BitStringMatcher(event.as_xtb523_echo_bit_str(), self._bep.feed_bit)
+      echo_bit_str, echo_qty = event.as_xtb523_echo_bit_str_and_qty()
+      self._bsm = BitStringMatcher(echo_bit_str, echo_qty, self._bep.feed_bit)
       self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
       if self._bsm.wait(ECHO_TIMEOUT):
         self._events_in.put(event)
@@ -264,7 +275,7 @@ class TashTenHatWithXtb523AllBits(TashTenHat):
   def __init__(self, i2c_device):
     super().__init__(i2c_device)
     self._bep = tw523.BitEventProcessor(event_func=self._events_in.put, dim_func=None, return_all_bits=True)
-    self._bsm = BitStringMatcher('0', self._bep.feed_bit)
+    self._bsm = BitStringMatcher('0', 1, self._bep.feed_bit)
     self._i2c = I2cAdapter(i2c_device, lambda byte: self._bsm.feed_byte(byte))
   
   def _handle_event_out(self, event):
@@ -275,8 +286,9 @@ class TashTenHatWithXtb523AllBits(TashTenHat):
         bit_str = event.as_bit_str()
       except AttributeError:
         raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
-      # Match the exact bit string we send because XTB-523 in Return All Bits mode does just that
-      self._bsm = BitStringMatcher(bit_str, self._bep.feed_bit)
+      # Match almost the exact bit string we send because XTB-523 in Return All Bits mode does just that... almost
+      echo_bit_str, echo_qty = event.as_xtb523allbits_echo_bit_str_and_qty()
+      self._bsm = BitStringMatcher(echo_bit_str, echo_qty, self._bep.feed_bit)
       self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
       if self._bsm.wait(ECHO_TIMEOUT):
         self._events_in.put(event)
