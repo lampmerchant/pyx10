@@ -54,17 +54,18 @@ class BitStringMatcher:
   """A device to attempt to match a stream of incoming bits from TashTenHat with an expected stream."""
   
   def __init__(self, expected_bit_str, expected_qty, passthrough_feed_bit):
-    self._expected_bits = deque((1 if i == '1' else 0)
-                                for i in (INTERFRAME_ZEROES * '0').join(expected_bit_str.strip('0') for j in range(expected_qty)))
-    self._matching_bits = deque()
+    self._expected_bits = deque((1 if i == '1' else 0) for i in expected_bit_str)
+    for _ in range(INTERFRAME_ZEROES): self._expected_bits.append(0)
+    self._expected_qty = expected_qty
+    self._held_qty = 0
     self._held_bits = deque()
-    self._zeroes = 0
     self._passthrough_feed_bit = passthrough_feed_bit
     self._event = Event()
     self._lock = Lock()
   
   def feed_byte(self, byte):
     """Feed a byte into the matcher."""
+    
     self.feed_bit(1 if byte & 0x80 else 0)
     self.feed_bit(1 if byte & 0x40 else 0)
     self.feed_bit(1 if byte & 0x20 else 0)
@@ -76,19 +77,18 @@ class BitStringMatcher:
   
   def feed_bit(self, bit):
     """Feed a bit into the matcher."""
+    
     with self._lock:
       if self._event.is_set():
         self._passthrough_feed_bit(bit)
       else:
         self._held_bits.append(bit)
-        if bit:
-          self._zeroes = 0
-        else:
-          self._zeroes += 1
-          if self._zeroes > INTERFRAME_ZEROES: return
-        self._matching_bits.append(bit)
-        if len(self._matching_bits) == len(self._expected_bits):
-          if self._matching_bits == self._expected_bits: self._event.set()
+        while len(self._held_bits) > len(self._expected_bits): self._passthrough_feed_bit(self._held_bits.popleft())
+        if len(self._held_bits) == len(self._expected_bits):
+          if self._held_bits == self._expected_bits:
+            self._held_qty += 1
+            self._held_bits = deque()
+            if self._held_qty >= self._expected_qty: self._event.set()
   
   def wait(self, timeout):
     """Wait for a match.  Return True if there was a match within the timeout, else False and pass the held bits through."""
@@ -96,6 +96,8 @@ class BitStringMatcher:
     result = self._event.wait(timeout)
     if result: return True
     with self._lock:
+      for _ in range(self._held_qty):
+        for bit in self._expected_bits: self._passthrough_feed_bit(bit)
       while self._held_bits: self._passthrough_feed_bit(self._held_bits.popleft())
       self._event.set()
     return False
