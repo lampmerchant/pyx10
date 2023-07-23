@@ -2,11 +2,10 @@
 
 
 from collections import deque
-from enum import Enum
 from fcntl import ioctl
 import logging
 import os
-from queue import Queue, Empty
+from queue import Empty
 from threading import Thread, Event, Lock
 
 from . import tw523
@@ -53,12 +52,18 @@ def bit_str_to_bytes(s):
 class BitStringMatcher:
   """A device to attempt to match a stream of incoming bits from TashTenHat with an expected stream."""
   
-  def __init__(self, expected_bit_str, expected_qty, passthrough_feed_bit):
-    self._expected_bits = deque((1 if i == '1' else 0) for i in expected_bit_str)
-    for _ in range(INTERFRAME_ZEROES): self._expected_bits.append(0)
-    self._expected_qty = expected_qty
-    self._held_qty = 0
+  def __init__(self, expected_bit_str, passthrough_feed_bit):
+    self._expected_bits = deque()
+    zeroes = 0
+    for bit in expected_bit_str:
+      if bit == '1':
+        self._expected_bits.append(1)
+        zeroes = 0
+      elif zeroes < INTERFRAME_ZEROES:
+        self._expected_bits.append(0)
+        zeroes += 1
     self._held_bits = deque()
+    self._zeroes = 0
     self._passthrough_feed_bit = passthrough_feed_bit
     self._event = Event()
     self._lock = Lock()
@@ -82,13 +87,15 @@ class BitStringMatcher:
       if self._event.is_set():
         self._passthrough_feed_bit(bit)
       else:
-        self._held_bits.append(bit)
+        if bit:
+          self._held_bits.append(1)
+          self._zeroes = 0
+        elif self._zeroes < INTERFRAME_ZEROES:
+          self._held_bits.append(0)
+          self._zeroes += 1
         while len(self._held_bits) > len(self._expected_bits): self._passthrough_feed_bit(self._held_bits.popleft())
         if len(self._held_bits) == len(self._expected_bits):
-          if self._held_bits == self._expected_bits:
-            self._held_qty += 1
-            self._held_bits = deque()
-            if self._held_qty >= self._expected_qty: self._event.set()
+          if self._held_bits == self._expected_bits: self._event.set()
   
   def wait(self, timeout):
     """Wait for a match.  Return True if there was a match within the timeout, else False and pass the held bits through."""
@@ -96,19 +103,18 @@ class BitStringMatcher:
     result = self._event.wait(timeout)
     if result: return True
     with self._lock:
-      for _ in range(self._held_qty):
-        for bit in self._expected_bits: self._passthrough_feed_bit(bit)
       while self._held_bits: self._passthrough_feed_bit(self._held_bits.popleft())
       self._event.set()
     return False
 
 
 class I2cAdapter(Thread):
+  """A device to repeatedly poll an I2C device and feed bytes read from it to a function."""
   
   def __init__(self, i2c_device, feed_byte_func):
     super().__init__()
     self._i2c_handle = os.open(i2c_device, os.O_RDWR)
-    ioctl(self._i2c_handle, IOCTL_I2C_TARGET, I2C_BASE_ADDR)
+    ioctl(self._i2c_handle, IOCTL_I2C_TARGET, I2C_BASE_ADDR)  # TODO target address should be configurable?
     self._feed_byte_func = feed_byte_func
     self._zero_flag = False
     self._shutdown = False
@@ -151,22 +157,53 @@ class I2cAdapter(Thread):
 class TashTenHat(X10Interface):
   """Represents the TashTenHat accessed over i2c-dev.  Linux-specific."""
   
-  def __init__(self, i2c_device):
+  def __init__(self):
     super().__init__()
     self._i2c = None
     self._shutdown = False
     self._stopped_event = Event()
+    self._bep = None  # subclass must provide this if it uses _handle_event_batch_out_with_echo
+    self._bsm = None  # subclass must provide this if it uses _handle_event_batch_out_with_echo
+  
+  def _handle_event_batch_out(self, event_batch):
+    raise NotImplementedError('subclass must override _handle_event_batch_out method')
+  
+  def _handle_event_batch_out_with_echo(self, event_batch, echo_bit_str_and_qty_fn_name):
+    """Send a batch of outbound events to the TashTenHat, expecting them to be echoed back in some form."""
+    
+    for event in event_batch:
+      if not hasattr(event, 'as_output_bit_str'):
+        raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
+    output_bit_str = (INTERFRAME_ZEROES * '0').join(event.as_output_bit_str() for event in event_batch)
+    echo_bit_str = (INTERFRAME_ZEROES * '0').join(
+      event_bit_str
+      for event_bit_str, event_bit_qty in (getattr(event, echo_bit_str_and_qty_fn_name)() for event in event_batch)
+      for i in range(event_bit_qty)
+    )
+    for attempt in range(MAX_FAILURES):
+      self._bsm = BitStringMatcher(echo_bit_str, self._bep.feed_bit)
+      self._i2c.write(bit_str_to_bytes(output_bit_str) + b'\x00')
+      if self._bsm.wait(ECHO_TIMEOUT):
+        # TODO This echoing does not take into account retries that were partially successful, is this good enough?
+        for event in event_batch: self._events_in.put(event)
+        break
+      if attempt + 1 < MAX_FAILURES:
+        logging.warning('failed to send batch, retrying: %s', ', '.join(str(event) for event in event_batch))
+      else:
+        logging.warning('failed to send batch, giving up: %s', ', '.join(str(event) for event in event_batch))
+    else:
+      logging.error('failed to send batch after %d attempts: %s', MAX_FAILURES, ', '.join(str(event) for event in event_batch))
   
   def run(self):
     """Main thread.  Handle outbound events for the TashTenHat."""
     
     while not self._shutdown:
       try:
-        event = self._events_out.get(timeout=QUEUE_TIMEOUT)
+        event_batch = self._event_batches_out.get(timeout=QUEUE_TIMEOUT)
       except Empty:
         continue
-      self._handle_event_out(event)
-      self._events_out.task_done()
+      self._handle_event_batch_out(event_batch)
+      self._event_batches_out.task_done()
     self._stopped_event.set()
   
   def start(self):
@@ -190,18 +227,18 @@ class TashTenHatWithPl513(TashTenHat):
   """Represents the TashTenHat, connected to a PL513, accessed over i2c-dev."""
   
   def __init__(self, i2c_device):
-    super().__init__(i2c_device)
+    super().__init__()
     self._i2c = I2cAdapter(i2c_device, lambda byte: None)
   
-  def _handle_event_out(self, event):
-    """Send an outbound event to the PL513 through the TashTenHat."""
+  def _handle_event_batch_out(self, event_batch):
+    """Send a batch of outbound events to the PL513 through the TashTenHat."""
     
-    try:
-      bit_str = event.as_bit_str()
-    except AttributeError:
-      raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
-    self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
-    self._events_in.put(event)  # Local echo is the only source of inbound events from the PL513
+    for event in event_batch:
+      if not hasattr(event, 'as_output_bit_str'):
+        raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
+    output_bit_str = ('0' * INTERFRAME_ZEROES).join(event.as_output_bit_str() for event in event_batch)
+    self._i2c.write(bit_str_to_bytes(output_bit_str) + b'\x00')
+    for event in event_batch: self._events_in.put(event)  # Local echo is the only source of inbound events from the PL513
 
 
 @register_interface('tashtenhat_tw523', ('*i2c_device',))
@@ -209,32 +246,20 @@ class TashTenHatWithTw523(TashTenHat):
   """Represents the TashTenHat, connected to a TW523, accessed over i2c-dev."""
   
   def __init__(self, i2c_device):
-    super().__init__(i2c_device)
+    super().__init__()
     self._bep = tw523.BitEventProcessor(
       event_func=self._events_in.put,
       dim_func=lambda dim_quantity: dim_quantity * 3 - 1,
       return_all_bits=False,
     )
-    self._bsm = BitStringMatcher('0', 1, self._bep.feed_bit)
+    self._bsm = BitStringMatcher('0', self._bep.feed_bit)
     self._i2c = I2cAdapter(i2c_device, lambda byte: self._bsm.feed_byte(byte))
   
-  def _handle_event_out(self, event):
-    """Send an outbound event to the TashTenHat."""
+  def _handle_event_batch_out(self, event_batch):
+    """Send a batch of outbound events to the TashTenHat."""
     
-    for _ in range(MAX_FAILURES):
-      try:
-        bit_str = event.as_bit_str()
-      except AttributeError:
-        raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
-      # Expect different echoed bits because TW523 and PSC05 mangle/truncate certain events
-      echo_bit_str, echo_qty = event.as_tw523_echo_bit_str_and_qty()
-      self._bsm = BitStringMatcher(echo_bit_str, echo_qty, self._bep.feed_bit)
-      self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
-      if self._bsm.wait(ECHO_TIMEOUT):
-        self._events_in.put(event)
-        break
-    else:
-      logging.error('failed to send %s after %d attempts', event, MAX_FAILURES)
+    # Expect different echoed bits because TW523 and PSC05 mangle/truncate certain events
+    self._handle_event_batch_out_with_echo(event_batch, 'as_tw523_echo_bit_str_and_qty')
 
 
 @register_interface('tashtenhat_xtb523', ('*i2c_device',))
@@ -242,32 +267,20 @@ class TashTenHatWithXtb523(TashTenHat):
   """Represents the TashTenHat, connected to an XTB-523 in normal mode, accessed over i2c-dev."""
   
   def __init__(self, i2c_device):
-    super().__init__(i2c_device)
+    super().__init__()
     self._bep = tw523.BitEventProcessor(
       event_func=self._events_in.put,
       dim_func=lambda dim_quantity: dim_quantity * 2,
       return_all_bits=False,
     )
-    self._bsm = BitStringMatcher('0', 1, self._bep.feed_bit)
+    self._bsm = BitStringMatcher('0', self._bep.feed_bit)
     self._i2c = I2cAdapter(i2c_device, lambda byte: self._bsm.feed_byte(byte))
   
-  def _handle_event_out(self, event):
-    """Send an outbound event to the TashTenHat."""
+  def _handle_event_batch_out(self, event_batch):
+    """Send a batch of outbound events to the TashTenHat."""
     
-    for _ in range(MAX_FAILURES):
-      try:
-        bit_str = event.as_bit_str()
-      except AttributeError:
-        raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
-      # Expect different echoed bits because XTB-523 in normal mode treats all events as doublets and returns only one half
-      echo_bit_str, echo_qty = event.as_xtb523_echo_bit_str_and_qty()
-      self._bsm = BitStringMatcher(echo_bit_str, echo_qty, self._bep.feed_bit)
-      self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
-      if self._bsm.wait(ECHO_TIMEOUT):
-        self._events_in.put(event)
-        break
-    else:
-      logging.error('failed to send %s after %d attempts', event, MAX_FAILURES)
+    # Expect different echoed bits because XTB-523 in normal mode treats all events as doublets and returns only one half
+    self._handle_event_batch_out_with_echo(event_batch, 'as_xtb523_echo_bit_str_and_qty')
 
 
 @register_interface('tashtenhat_xtb523allbits', ('*i2c_device',))
@@ -275,25 +288,13 @@ class TashTenHatWithXtb523AllBits(TashTenHat):
   """Represents the TashTenHat, connected to an XTB-523 in Return All Bits mode, accessed over i2c-dev."""
   
   def __init__(self, i2c_device):
-    super().__init__(i2c_device)
+    super().__init__()
     self._bep = tw523.BitEventProcessor(event_func=self._events_in.put, dim_func=None, return_all_bits=True)
-    self._bsm = BitStringMatcher('0', 1, self._bep.feed_bit)
+    self._bsm = BitStringMatcher('0', self._bep.feed_bit)
     self._i2c = I2cAdapter(i2c_device, lambda byte: self._bsm.feed_byte(byte))
   
-  def _handle_event_out(self, event):
-    """Send an outbound event to the TashTenHat."""
+  def _handle_event_batch_out(self, event_batch):
+    """Send a batch of outbound events to the TashTenHat."""
     
-    for _ in range(MAX_FAILURES):
-      try:
-        bit_str = event.as_bit_str()
-      except AttributeError:
-        raise ValueError('%s is not an event type that can be serialized for the TashTenHat' % type(event).__name__)
-      # Match almost the exact bit string we send because XTB-523 in Return All Bits mode does just that... almost
-      echo_bit_str, echo_qty = event.as_xtb523allbits_echo_bit_str_and_qty()
-      self._bsm = BitStringMatcher(echo_bit_str, echo_qty, self._bep.feed_bit)
-      self._i2c.write(bit_str_to_bytes(bit_str) + b'\x00')
-      if self._bsm.wait(ECHO_TIMEOUT):
-        self._events_in.put(event)
-        break
-    else:
-      logging.error('failed to send %s after %d attempts', event, MAX_FAILURES)
+    # Match almost the exact bit string we send because XTB-523 in Return All Bits mode does just that... almost
+    self._handle_event_batch_out_with_echo(event_batch, 'as_xtb523allbits_echo_bit_str_and_qty')

@@ -1,12 +1,12 @@
 """Functions to run an event-based X10 app."""
 
 
+from collections import deque
 from configparser import ConfigParser
 import inspect
 import logging
 import os
 import re
-import sys
 from queue import Empty
 from threading import Thread, Event
 import time
@@ -25,7 +25,7 @@ POSSIBLE_CONFIG_LOCATIONS = ('~/.pyx10.ini', '~/pyx10.ini', '/etc/pyx10.ini')
 # Monkey patches for X10 event classes
 
 
-def X10AddressEvent_do_app_event(self, module, intf):
+def X10AddressEvent_do_app_event(self, module, _):
   """Invoke an app event function for this event, if one exists."""
   
   module._x10_last_house_letter = X10_HOUSE_CODES_REV[self.house_code]
@@ -147,35 +147,40 @@ class CommandProcessor:
     self._intf = intf
     self._house_code = X10_HOUSE_CODES['A']
   
-  def command(self, cmd_str):
+  def process_command(self, cmd_str):
     """Parse a command string."""
     
-    for cmd in cmd_str.strip().split():
-      cmd = cmd.strip().upper()
+    cmds = deque(cmd.strip().upper() for cmd in cmd_str.strip().split())
+    logging.debug('parsing command string: %s', ' '.join(cmds))
+    batch = deque()
+    for cmd in cmds:
       if not cmd: continue
-      logging.info('inbound FIFO command: %s', cmd)
       if m := self.REO_TARGET.match(cmd):
         house, unit = m.groups()
         if house: self._house_code = X10_HOUSE_CODES[house]
-        if unit: self._intf.put(X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[int(unit)]))
+        if unit: batch.append(X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[int(unit)]))
       elif (s := cmd.replace('-', '').replace('_', '')) in self.SIMPLE_COMMANDS:
-        self._intf.put(X10FunctionEvent(house_code=self._house_code, function=self.SIMPLE_COMMANDS[s]))
+        batch.append(X10FunctionEvent(house_code=self._house_code, function=self.SIMPLE_COMMANDS[s]))
       elif m := self.REO_REL_DIM.match(cmd):
-        self._intf.put(X10RelativeDimEvent(house_code=self._house_code, dim=int(m.group(1)) / 100))
+        batch.append(X10RelativeDimEvent(house_code=self._house_code, dim=int(m.group(1)) / 100))
       elif m := self.REO_ABS_DIM.match(cmd):
-        self._intf.put(X10AbsoluteDimEvent(dim=int(m.group(1)) / 100))
+        batch.append(X10AbsoluteDimEvent(dim=int(m.group(1)) / 100))
       elif m := self.REO_EXT_CODE.match(cmd):
         unit_num, first, second = m.groups()
         first = int(first, 16)
         second = int(second, 16) if second is not None else None
-        self._intf.put(X10ExtendedCodeEvent(
+        batch.append(X10ExtendedCodeEvent(
           house_code=self._house_code,
           unit_code=X10_UNIT_CODES[int(unit_num)],
           data_byte=0 if second is None else first,
           cmd_byte=first if second is None else second,
         ))
       else:
-        logging.warning('invalid command: %s', cmd)
+        logging.warning('invalid command, not executing batch: %s', cmd)
+        break
+    else:
+      logging.debug('sending batch from command string: %s', ', '.join(str(event) for event in batch))
+      self._intf.put_batch(batch)
 
 
 class EventDispatcher(Thread):
@@ -262,7 +267,9 @@ def run(module=None):
       if fifo_path:
         with open(fifo_path, 'r') as fifo:
           while line := fifo.readline():
-            command_processor.command(line.strip())
+            line = line.strip()
+            logging.info('inbound line from FIFO: %s', line)
+            command_processor.process_command(line)
       else:
         time.sleep(1)
   except KeyboardInterrupt:

@@ -96,16 +96,16 @@ def X10ExtendedCodeEvent_as_bit_str_and_qty(self):
 X10ExtendedCodeEvent.as_bit_str_and_qty = X10ExtendedCodeEvent_as_bit_str_and_qty
 
 
-def X10Event_as_bit_str(self):
-  """Convert this event into its line bit representation."""
+def X10Event_as_output_bit_str(self):
+  """Convert this event into its line bit representation for output by a power line interface."""
   bit_str, qty = self.as_bit_str_and_qty()
   return bit_str * qty
 
-X10AddressEvent.as_bit_str = X10Event_as_bit_str
-X10FunctionEvent.as_bit_str = X10Event_as_bit_str
-X10RelativeDimEvent.as_bit_str = X10Event_as_bit_str
-X10AbsoluteDimEvent.as_bit_str = X10Event_as_bit_str
-X10ExtendedCodeEvent.as_bit_str = X10Event_as_bit_str
+X10AddressEvent.as_output_bit_str = X10Event_as_output_bit_str
+X10FunctionEvent.as_output_bit_str = X10Event_as_output_bit_str
+X10RelativeDimEvent.as_output_bit_str = X10Event_as_output_bit_str
+X10AbsoluteDimEvent.as_output_bit_str = X10Event_as_output_bit_str
+X10ExtendedCodeEvent.as_output_bit_str = X10Event_as_output_bit_str
 
 
 def X10Event_as_tw523_echo_bit_str_and_qty(self):

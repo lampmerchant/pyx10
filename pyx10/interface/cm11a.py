@@ -30,10 +30,12 @@ from .registry import register_interface
 # - CM11A's receive buffer seems to be circular.  I don't know what the heyu code is on about with 'deferred' dim parameters...
 
 
-MAX_FAILURES = 5  # Maximum number of times the checksum can be wrong when attempting to send a packet to the CM11A
+MAX_CHECKSUM_FAILURES = 5  # Maximum number of times the checksum can be wrong when attempting to send a packet to the CM11A
+MAX_FAILURES = 10  # Maximum number of times we can fail to send a batch of events to the CM11A
 READY_TIMEOUT = 10  # Maximum length of time the CM11A can take to send a transmission
 SERIAL_TIMEOUT = 0.25  # Maximum length of time we should wait for the CM11A to respond to a byte
 POLL_WAIT_TIME = 1.5  # Maximum length of time we should wait for the CM11A to send a polling byte
+RESET_DELAY = 1  # Length of idle time after which we expect the CM11A to have reset its serial interface
 
 CM11A_POLL_RECV = 0x5A
 CM11A_POLL_RECV_RESP = 0xC3
@@ -170,13 +172,13 @@ class CM11A(X10Interface):
       raise ValueError('%s is not an event type that can be serialized for the CM11A' % type(event).__name__)
     packet_desc = str(event)
     checksum = sum(packet) & 0xFF
-    for _ in range(MAX_FAILURES):
+    for _ in range(MAX_CHECKSUM_FAILURES):
       self._serial.write(packet)
       try:
         response = self._serial.get(timeout=POLL_WAIT_TIME)  # If CM11A is polling, it might not respond immediately
       except Empty:
-        logging.error('no response from CM11A to %s', packet_desc)
-        return
+        logging.warning('no response from CM11A to %s', packet_desc)
+        return False
       if response == checksum: break
       if response in CM11A_POLL_BYTES:
         # If response is not our checksum but is one of the poll bytes, see if it gets sent again
@@ -187,35 +189,36 @@ class CM11A(X10Interface):
             raise InterruptedByPoll(response)
           else:
             # If we got some other byte unprompted, something very weird is going on
-            logging.error('unprompted responses 0x%02X, 0x%02X from CM11A sending %s', response, response2, packet_desc)
-            return
+            logging.warning('unprompted responses 0x%02X, 0x%02X from CM11A sending %s', response, response2, packet_desc)
+            return False
         except Empty:
           # If the byte was not repeated, it was just a bad checksum, so try sending the packet again
           pass
     else:
-      logging.error('too many bad checksum responses from CM11A to %s', packet_desc)
-      return
+      logging.warning('too many bad checksum responses from CM11A to %s', packet_desc)
+      return False
     self._serial.write(b'\x00')  # We got a good checksum response, so confirm to the interface to send the packet over X10
     try:
       response = self._serial.get(timeout=READY_TIMEOUT)
     except Empty:
-      logging.error('no ready response from CM11A to %s after %s seconds', packet_desc, READY_TIMEOUT)
-      return
+      logging.warning('no ready response from CM11A to %s after %s seconds', packet_desc, READY_TIMEOUT)
+      return False
     if response in CM11A_POLL_BYTES and response == checksum:
       # If we got the same byte a second time, the first wasn't actually a good checksum, it was a poll
       # This works because CM11A_READY_RESP is not in CM11A_POLL_BYTES
       raise InterruptedByPoll(response)
     if response != CM11A_READY_RESP:
-      logging.error('bad ready response of 0x%02X from CM11A after %s', response, packet_desc)
-      return
+      logging.warning('bad ready response of 0x%02X from CM11A after %s', response, packet_desc)
+      return False
     self._events_in.put(event)
+    return True
   
   def _handle_poll_time(self):
     """Handle the CM11A's poll for the time after a power failure."""
     
     # Get CM11A to shut up about needing the time by sending the response byte and then waiting until the interface resets
     self._serial.write(bytes((CM11A_POLL_TIME_RESP,)))
-    time.sleep(1)
+    time.sleep(RESET_DELAY)
     # TODO give it the actual time?  clear EEPROM here, too, maybe?
   
   def _handle_poll_receive(self):
@@ -296,24 +299,30 @@ class CM11A(X10Interface):
   def run(self):
     """Main thread.  Handle polls from the CM11A and events for the CM11A."""
     
-    mqg = MultiQueueGetter(self._serial, self._events_out)
+    mqg = MultiQueueGetter(self._serial, self._event_batches_out)
     mqg.start()
     while not self._shutdown:
       try:
-        queue, event = mqg.get(timeout=SERIAL_TIMEOUT)
+        queue, queue_item = mqg.get(timeout=SERIAL_TIMEOUT)
       except Empty:
         continue
       mqg.stop()  # Stop the MultiQueueGetter so _handle_poll and _handle_event have access to incoming serial data
       if queue is self._serial:
-        self._handle_poll(event)
-      elif queue is self._events_out:
-        while True:
+        self._handle_poll(queue_item)
+      elif queue is self._event_batches_out:
+        for _ in range(MAX_FAILURES):
           try:
-            self._handle_event(event)
-            break
+            for event in queue_item:
+              if not self._handle_event(event):
+                time.sleep(RESET_DELAY)
+                break
+            else:
+              break
           except InterruptedByPoll as e:
             self._handle_poll(e.poll_byte)
-        self._events_out.task_done()
+        else:
+          logging.error('failed to send batch after %d attempts: %s', MAX_FAILURES, ', '.join(str(event) for event in queue_item))
+        self._event_batches_out.task_done()
       mqg.start()
     mqg.stop()
     self._stopped_event.set()

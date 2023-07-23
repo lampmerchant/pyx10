@@ -13,11 +13,15 @@ def x10_d3_off(intf):
 
 
 def x10_d4_on(intf):
-  intf.get_controller('D').on(2)
+  x10 = intf.get_controller('D')
+  x10.on(2)
+  x10.send()
 
 
 def x10_d4_off(intf):
-  intf.get_controller('D').off(2)
+  x10 = intf.get_controller('D')
+  x10.off(2)
+  x10.send()
 
 
 pyx10.run()

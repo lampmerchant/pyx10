@@ -153,52 +153,56 @@ class MultiQueueGetter:
 class X10Controller:
   """A simple X10 controller for a given house code."""
   
-  def __init__(self, house_letter, put_function):
+  def __init__(self, house_letter, put_batch_function):
     house_letter = house_letter.strip().upper()
     try:
       self._house_code = X10_HOUSE_CODES[house_letter]
     except KeyError as e:
       raise KeyError('invalid house letter "%s"' % house_letter) from e
-    self._put_function = put_function
+    self._put_batch_function = put_batch_function
+    self._batch = deque()
+  
+  def send(self):
+    self._put_batch_function(self._batch)
   
   # Whole-House Functions
   
-  def all_off(self): self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_OFF))
-  def all_lights_on(self): self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_ON))
-  def all_lights_off(self): self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_OFF))
+  def all_off(self): self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_OFF))
+  def all_lights_on(self): self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_ON))
+  def all_lights_off(self): self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_OFF))
   
   # Simple Unit Functions
   
   def unit(self, unit_number=None):
     if unit_number is None: return
     if not 1 <= unit_number <= 16: raise ValueError('unit number must be between 1 and 16, inclusive')
-    self._put_function(X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[unit_number]))
+    self._batch.append(X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[unit_number]))
   
   def on(self, unit_number=None):
     self.unit(unit_number)
-    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ON))
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ON))
   
   def off(self, unit_number=None):
     self.unit(unit_number)
-    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_OFF))
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_OFF))
   
   def dim(self, unit_number=None):
     self.unit(unit_number)
-    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_DIM))
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_DIM))
   
   def bright(self, unit_number=None):
     self.unit(unit_number)
-    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_BRIGHT))
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_BRIGHT))
   
   # Dim Unit Functions
   
   def rel_dim(self, dim, unit_number=None):
     self.unit(unit_number)
-    self._put_function(X10RelativeDimEvent(house_code=self._house_code, dim=dim))
+    self._batch.append(X10RelativeDimEvent(house_code=self._house_code, dim=dim))
   
   def abs_dim(self, dim, unit_number):
     self.unit(unit_number)
-    self._put_function(X10AbsoluteDimEvent(dim=dim))
+    self._batch.append(X10AbsoluteDimEvent(dim=dim))
   
   # Extended Functions
   
@@ -206,18 +210,18 @@ class X10Controller:
     if not 1 <= unit_number <= 16: raise ValueError('unit number must be between 1 and 16, inclusive')
     if not 0 <= data_byte < 256: raise ValueError('data byte must be between 0 and 255, inclusive')
     if not 0 <= cmd_byte < 256: raise ValueError('command byte must be between 0 and 255, inclusive')
-    self._put_function(X10ExtendedCodeEvent(
+    self._batch.append(X10ExtendedCodeEvent(
       house_code=self._house_code,
       unit_code=X10_UNIT_CODES[unit_number],
       data_byte=data_byte, cmd_byte=cmd_byte,
     ))
   
   def hail_req(self):
-    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_HAIL_REQ))
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_HAIL_REQ))
   
   def status_req(self, unit_number=None):
     self.unit(unit_number)
-    self._put_function(X10FunctionEvent(house_code=self._house_code, function=X10_FN_STATUS_REQ))
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_STATUS_REQ))
 
 
 class X10Interface(Thread):
@@ -226,7 +230,7 @@ class X10Interface(Thread):
   def __init__(self):
     super().__init__()
     self._events_in = Queue()
-    self._events_out = Queue()
+    self._event_batches_out = Queue()
   
   # Thread Functions
   
@@ -243,14 +247,20 @@ class X10Interface(Thread):
     return self._events_in.get(block, timeout)
   
   def put(self, event, block=True):
-    """Queue an event for the interface to send, optionally blocking until it is sent."""
+    """Queue a single event for the interface to send, optionally blocking until it is sent."""
     
-    self._events_out.put(event)
-    if block: self._events_out.join()
+    self._event_batches_out.put((event,))
+    if block: self._event_batches_out.join()
+  
+  def put_batch(self, event_batch, block=True):
+    """Queue a batch of events for the interface to send, optionally blocking until they are sent."""
+    
+    self._event_batches_out.put(event_batch)
+    if block: self._event_batches_out.join()
   
   # Control Functions
   
   def get_controller(self, house_letter):
     """Create and return an X10Controller for this interface and the given house letter."""
     
-    return X10Controller(house_letter=house_letter, put_function=self.put)
+    return X10Controller(house_letter=house_letter, put_batch_function=self.put_batch)
