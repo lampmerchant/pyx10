@@ -131,6 +131,7 @@ class SerialAdapter(Thread, Queue):
   def run(self):
     """Thread.  Monitors serial port and queues bytes read from it."""
     
+    logging.info('starting serial adapter, port: %s', self._serial_obj.port)
     while not self._shutdown:
       data = self._serial_obj.read(1)
       if not data: continue
@@ -147,8 +148,10 @@ class SerialAdapter(Thread, Queue):
   def stop(self):
     """Stop thread.  Blocks until thread is stopped."""
     
+    logging.info('stopping serial adapter')
     self._shutdown = True
     self._stopped_event.wait()
+    logging.info('serial adapter stopped')
 
 
 @register_interface('cm11a', ('*serial_port',))
@@ -299,6 +302,7 @@ class CM11A(X10Interface):
   def run(self):
     """Main thread.  Handle polls from the CM11A and events for the CM11A."""
     
+    logging.info('starting CM11A interface')
     mqg = MultiQueueGetter(self._serial, self._event_batches_out)
     mqg.start()
     while not self._shutdown:
@@ -338,6 +342,8 @@ class CM11A(X10Interface):
   def stop(self):
     """Stop the main thread.  Blocks until the thread has been stopped."""
     
+    logging.info('stopping CM11A interface')
     self._shutdown = True
     self._serial.stop()
     self._stopped_event.wait()
+    logging.info('CM11A interface stopped')

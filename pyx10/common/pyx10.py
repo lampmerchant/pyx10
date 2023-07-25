@@ -7,6 +7,9 @@ from queue import Queue
 from threading import Thread, Event
 
 
+PROGRAM_NAME = 'pyx10'
+PROGRAM_VERSION = '0.0'
+
 X10_CODES = (0x6, 0xE, 0x2, 0xA, 0x1, 0x9, 0x5, 0xD, 0x7, 0xF, 0x3, 0xB, 0x0, 0x8, 0x4, 0xC)
 X10_HOUSE_CODES = {letter: code for letter, code in zip('ABCDEFGHIJKLMNOP', X10_CODES)}
 X10_HOUSE_CODES_REV = {code: letter for letter, code in zip('ABCDEFGHIJKLMNOP', X10_CODES)}

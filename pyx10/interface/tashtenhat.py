@@ -95,7 +95,9 @@ class BitStringMatcher:
           self._zeroes += 1
         while len(self._held_bits) > len(self._expected_bits): self._passthrough_feed_bit(self._held_bits.popleft())
         if len(self._held_bits) == len(self._expected_bits):
-          if self._held_bits == self._expected_bits: self._event.set()
+          if self._held_bits == self._expected_bits:
+            self._held_bits = deque()
+            self._event.set()
   
   def wait(self, timeout):
     """Wait for a match.  Return True if there was a match within the timeout, else False and pass the held bits through."""
@@ -128,6 +130,7 @@ class I2cAdapter(Thread):
   def run(self):
     """Thread.  Polls I2C device and feeds X10 bytes read from it to the given function."""
     
+    logging.info('starting I2C adapter')
     while not self._shutdown:
       data = os.read(self._i2c_handle, 1)  # TODO what happens when this errors?
       data = data[0]
@@ -149,9 +152,11 @@ class I2cAdapter(Thread):
   def stop(self):
     """Stop thread.  Blocks until thread is stopped."""
     
+    logging.info('stopping I2C adapter')
     self._shutdown = True
     self._stopped_event.wait()
     os.close(self._i2c_handle)
+    logging.info('I2C adapter stopped')
 
 
 class TashTenHat(X10Interface):
@@ -184,7 +189,6 @@ class TashTenHat(X10Interface):
       self._bsm = BitStringMatcher(echo_bit_str, self._bep.feed_bit)
       self._i2c.write(bit_str_to_bytes(output_bit_str) + b'\x00')
       if self._bsm.wait(ECHO_TIMEOUT):
-        # TODO This echoing does not take into account retries that were partially successful, is this good enough?
         for event in event_batch: self._events_in.put(event)
         break
       if attempt + 1 < MAX_FAILURES:
@@ -197,6 +201,7 @@ class TashTenHat(X10Interface):
   def run(self):
     """Main thread.  Handle outbound events for the TashTenHat."""
     
+    logging.info('starting TashTenHat interface')
     while not self._shutdown:
       try:
         event_batch = self._event_batches_out.get(timeout=QUEUE_TIMEOUT)
@@ -217,9 +222,11 @@ class TashTenHat(X10Interface):
   def stop(self):
     """Stop the main thread.  Blocks until the thread has been stopped."""
     
+    logging.info('stopping TashTenHat interface')
     self._shutdown = True
     self._i2c.stop()
     self._stopped_event.wait()
+    logging.info('TashTenHat interface stopped')
 
 
 @register_interface('tashtenhat_pl513', ('*i2c_device',))
