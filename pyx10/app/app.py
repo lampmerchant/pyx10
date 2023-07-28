@@ -4,6 +4,7 @@
 from configparser import ConfigParser
 import inspect
 import logging
+import logging.config
 import os
 from queue import Empty
 import signal
@@ -212,20 +213,21 @@ def run(module=None):
   else:
     raise FileNotFoundError('config file not found at any expected location: %s' % ', '.join(possible_config_locations))
   
+  # logging sections
+  if 'loggers' in config and 'handlers' in config and 'formatters' in config:
+    logging.config.fileConfig(config)
+    basic_log_warning = False
+  else:
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
+    basic_log_warning = True
+  logging.info('configuration read from %s', config_location)
+  if basic_log_warning:
+    logging.warning('config does not contain "loggers", "handlers", and "formatters" sections, using basic logging to stderr only')
+  
   # interface section
   if 'interface' not in config: raise ValueError('config file at %s is missing "interface" section' % config_location)
   intf = get_interface(config['interface'])
   dispatcher = EventDispatcher(module, intf)
-  
-  # log section
-  log_level_mapping = logging.getLevelNamesMapping()
-  log_level = logging.WARNING
-  if 'log' in config:
-    if 'level' in config['log']:
-      if config['log']['level'] not in log_level_mapping:
-        raise ValueError('log level "%s" is not one of: %s' % (config['log']['level'], ', '.join(log_level_mapping)))
-      log_level = log_level_mapping[config['log']['level']]
-  logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=log_level)
   
   # fifo_server section
   fifo_server = None
