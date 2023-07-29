@@ -167,12 +167,21 @@ class X10Controller:
   
   def send(self):
     self._put_batch_function(self._batch)
+    return self
   
   # Whole-House Functions
   
-  def all_off(self): self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_OFF))
-  def all_lights_on(self): self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_ON))
-  def all_lights_off(self): self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_OFF))
+  def all_off(self):
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_OFF))
+    return self
+  
+  def all_lights_on(self):
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_ON))
+    return self
+  
+  def all_lights_off(self):
+    self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ALL_LIGHTS_OFF))
+    return self
   
   # Simple Unit Functions
   
@@ -180,32 +189,39 @@ class X10Controller:
     if unit_number is None: return
     if not 1 <= unit_number <= 16: raise ValueError('unit number must be between 1 and 16, inclusive')
     self._batch.append(X10AddressEvent(house_code=self._house_code, unit_code=X10_UNIT_CODES[unit_number]))
+    return self
   
   def on(self, unit_number=None):
     self.unit(unit_number)
     self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_ON))
+    return self
   
   def off(self, unit_number=None):
     self.unit(unit_number)
     self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_OFF))
+    return self
   
   def dim(self, unit_number=None):
     self.unit(unit_number)
     self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_DIM))
+    return self
   
   def bright(self, unit_number=None):
     self.unit(unit_number)
     self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_BRIGHT))
+    return self
   
   # Dim Unit Functions
   
   def rel_dim(self, dim, unit_number=None):
     self.unit(unit_number)
     self._batch.append(X10RelativeDimEvent(house_code=self._house_code, dim=dim))
+    return self
   
   def abs_dim(self, dim, unit_number):
     self.unit(unit_number)
     self._batch.append(X10AbsoluteDimEvent(dim=dim))
+    return self
   
   # Extended Functions
   
@@ -218,13 +234,16 @@ class X10Controller:
       unit_code=X10_UNIT_CODES[unit_number],
       data_byte=data_byte, cmd_byte=cmd_byte,
     ))
+    return self
   
   def hail_req(self):
     self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_HAIL_REQ))
+    return self
   
   def status_req(self, unit_number=None):
     self.unit(unit_number)
     self._batch.append(X10FunctionEvent(house_code=self._house_code, function=X10_FN_STATUS_REQ))
+    return self
 
 
 class X10Interface(Thread):
