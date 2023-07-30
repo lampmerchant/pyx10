@@ -8,6 +8,7 @@ import logging.config
 import os
 import signal
 from threading import Event
+import time
 
 from ..common import PROGRAM_NAME, PROGRAM_VERSION
 from ..interface import get_interface
@@ -23,6 +24,27 @@ except ImportError:
 
 
 POSSIBLE_CONFIG_LOCATIONS = ('~/.pyx10.ini', '~/pyx10.ini', '/etc/pyx10.ini')
+
+
+def ensure_clock_stability(period, tolerance=0.1):
+  """Ensure that the system clock has not changed drastically within the given number of seconds."""
+  
+  logging.debug('ensuring stability of system clock')
+  initial_time = time.time()
+  start_time = initial_time
+  retries_required = 0
+  while True:
+    expected_time_min = start_time + (period * (1 - tolerance))
+    expected_time_max = start_time + (period * (1 + tolerance))
+    time.sleep(period)
+    end_time = time.time()
+    if expected_time_min <= end_time <= expected_time_max: break
+    logging.debug('system clock not stable; expected it to change by %d seconds but changed by %d seconds instead so retrying',
+                  period, end_time - start_time)
+    retries_required += 1
+    start_time = time.time()
+  logging.info('system clock appears to %s after %d seconds', 'have stabilized' if retries_required else 'be stable',
+               period * (retries_required + 1))
 
 
 class SignalHandler:
@@ -129,15 +151,24 @@ def run(module=None):
       if not os.path.exists(fifo_path): raise FileNotFoundError('FIFO at "%s" does not exist' % fifo_path)
       fifo_server = FifoServer(fifo_path, intf)
   
+  # scheduler section
+  clock_stability_delay = 0
+  if 'scheduler' in config and 'clock_stability_delay' in config['scheduler']:
+    try:
+      clock_stability_delay = int(config['scheduler']['clock_stability_delay'])
+    except ValueError:
+      logging.warning('value "%s" for clock_stability_delay is not a valid integer', config['scheduler']['clock_stability_delay'])
+  
   # Run the app
   logging.info('starting %s %s', PROGRAM_NAME, PROGRAM_VERSION)
   intf.start()
+  if fifo_server: fifo_server.start()
+  if clock_stability_delay: ensure_clock_stability(clock_stability_delay)
   dispatcher.start()
   scheduler.start()
-  if fifo_server: fifo_server.start()
   SignalHandler().wait()
-  if fifo_server: fifo_server.stop()
   scheduler.stop()
   dispatcher.stop()
+  if fifo_server: fifo_server.stop()
   intf.stop()
   logging.info('stopping %s %s', PROGRAM_NAME, PROGRAM_VERSION)

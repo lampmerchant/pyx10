@@ -57,7 +57,7 @@ pyx10.run()
    * `<unit>` may be any house code (A-P) and unit number (1-16) combination
    * Function parameters:
       * `intf` - reference to X10 interface
-      * `dim` - relative dim level, 0.0 to 1.0, inclusive
+      * `dim` - absolute dim level, 0.0 to 1.0, inclusive
 * Extended Code
    * Format: `x10_<unit>_ext_code`
    * `<unit>` may be any house code (A-P) and unit number (1-16) combination
@@ -104,6 +104,9 @@ path=/root/x10
 
 [location]
 city=Denver
+
+[scheduler]
+clock_stability_delay=60
 
 # Logging Configuration (see https://docs.python.org/3/library/logging.config.html#logging-config-fileformat for details)
 
@@ -158,6 +161,13 @@ This section is optional.  If it is present (and the Python [astral](https://pyp
 will be possible to schedule timed events at dawn, dusk, sunrise, sunset, and solar noon.  Either the parameter `city` must be
 supplied, containing the name of a major city (all world and US state capitals are recognized), or `latitude` and `longitude`
 must be supplied.
+
+### `scheduler` Section
+
+This section is optional.  If the `clock_stability_delay` parameter is present, before starting the event scheduler, pyx10 will
+sleep for the given number of seconds and check that the same number of seconds elapsed according to the system clock.  If not, the
+check is retried until it passes.  This allows pyx10 apps to be used as services on Raspberry Pi systems and others without
+real-time clocks where the system clock may be vastly wrong on startup before it is corrected by an NTP service.
 
 ### Logging Sections
 

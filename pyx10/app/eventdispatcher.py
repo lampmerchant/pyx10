@@ -8,6 +8,7 @@ from threading import Thread, Event
 from ..common import X10_FN_ALL_OFF, X10_FN_ALL_LIGHTS_ON, X10_FN_ALL_LIGHTS_OFF, X10_FN_HAIL_REQ
 from ..common import X10_FN_ON, X10_FN_OFF, X10_FN_STATUS_REQ, X10_HOUSE_CODES_REV, X10_UNIT_CODES_REV
 from ..common import X10AddressEvent, X10FunctionEvent, X10RelativeDimEvent, X10AbsoluteDimEvent, X10ExtendedCodeEvent
+from .eventcommon import call_module_function
 
 
 QUEUE_TIMEOUT = 0.25  # Interval at which app thread should check if it's stopped
@@ -39,24 +40,14 @@ def X10FunctionEvent_do_app_event(self, module, intf):
       X10_FN_ALL_LIGHTS_OFF: 'all_lights_off',
       X10_FN_HAIL_REQ: 'hail_req',
     }[self.function])).lower()
-    func = getattr(module, func_name, None)
-    if func is None:
-      logging.debug('no function %s exists in module', func_name)
-    else:
-      logging.debug('invoking function %s in module', func_name)
-      func(intf)
+    call_module_function(module, func_name, (intf,))
   elif self.function in (X10_FN_ON, X10_FN_OFF, X10_FN_STATUS_REQ) and unit_number is not None:
     func_name = ('x10_%s%d_%s' % (house_letter, unit_number, {
       X10_FN_ON: 'on',
       X10_FN_OFF: 'off',
       X10_FN_STATUS_REQ: 'status_req',
     }[self.function])).lower()
-    func = getattr(module, func_name, None)
-    if func is None:
-      logging.debug('no function %s exists in module', func_name)
-    else:
-      logging.debug('invoking function %s in module', func_name)
-      func(intf)
+    call_module_function(module, func_name, (intf,))
 
 X10FunctionEvent.do_app_event = X10FunctionEvent_do_app_event
 
@@ -68,12 +59,7 @@ def X10RelativeDimEvent_do_app_event(self, module, intf):
   unit_number = getattr(module, '_x10_last_unit_number', {}).get(house_letter, None)
   if unit_number is None: return
   func_name = ('x10_%s%d_rel_dim' % (house_letter, unit_number)).lower()
-  func = getattr(module, func_name, None)
-  if func is None:
-    logging.debug('no function %s exists in module', func_name)
-  else:
-    logging.debug('invoking function %s in module', func_name)
-    func(intf, self.dim)
+  call_module_function(module, func_name, (intf, self.dim))
 
 X10RelativeDimEvent.do_app_event = X10RelativeDimEvent_do_app_event
 
@@ -86,12 +72,7 @@ def X10AbsoluteDimEvent_do_app_event(self, module, intf):
   unit_number = getattr(module, '_x10_last_unit_number', {}).get(house_letter, None)
   if unit_number is None: return
   func_name = ('x10_%s%d_abs_dim' % (house_letter, unit_number)).lower()
-  func = getattr(module, func_name, None)
-  if func is None:
-    logging.debug('no function %s exists in module', func_name)
-  else:
-    logging.debug('invoking function %s in module', func_name)
-    func(intf, self.dim)
+  call_module_function(module, func_name, (intf, self.dim))
 
 X10AbsoluteDimEvent.do_app_event = X10AbsoluteDimEvent_do_app_event
 
@@ -102,12 +83,7 @@ def X10ExtendedCodeEvent_do_app_event(self, module, intf):
   house_letter = X10_HOUSE_CODES_REV[self.house_code]
   unit_number = X10_UNIT_CODES_REV[self.unit_code]
   func_name = ('x10_%s%d_ext_code' % (house_letter, unit_number)).lower()
-  func = getattr(module, func_name, None)
-  if func is None:
-    logging.debug('no function %s exists in module', func_name)
-  else:
-    logging.debug('invoking function %s in module', func_name)
-    func(intf, self.data_byte, self.command_byte)
+  call_module_function(module, func_name, (intf, self.data_byte, self.command_byte))
 
 X10ExtendedCodeEvent.do_app_event = X10ExtendedCodeEvent_do_app_event
 

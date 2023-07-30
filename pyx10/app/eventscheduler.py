@@ -14,6 +14,8 @@ try:
 except ImportError:
   astral = None
 
+from .eventcommon import call_module_function
+
 
 SCHED_TIMEOUT = 0.25  # Interval at which EventScheduler thread should check if it's stopped
 
@@ -33,10 +35,6 @@ class EventScheduler(Thread):
     self._shutdown = False
     self._lock = Lock()
     self._stopped_event = Event()
-  
-  def _invoke_scheduled_function(self, func_name):
-    logging.debug('invoking function %s in module', func_name)
-    getattr(self._module, func_name)(self._intf)
   
   def _schedule_events_of_today(self, partial_day=False):
     now_naive = datetime.now()
@@ -61,10 +59,10 @@ class EventScheduler(Thread):
           hour = int(m.group(1)[0:2])
           minute = int(m.group(1)[2:4])
           second = 0
-        event_datetime_naive = now_naive.replace(hour=hour, minute=minute, second=second)
-        if partial_day and event_datetime_naive < now_naive: continue
-        logging.debug('scheduling %s to run at %s', func_name, event_datetime_naive.isoformat())
-        self._scheduler.enterabs(event_datetime_naive.timestamp(), 1, self._invoke_scheduled_function, (func_name,))
+        event_dt_naive = now_naive.replace(hour=hour, minute=minute, second=second)
+        if partial_day and event_dt_naive < now_naive: continue
+        logging.debug('scheduling %s to run at %s', func_name, event_dt_naive.isoformat())
+        self._scheduler.enterabs(event_dt_naive.timestamp(), 1, call_module_function, (self._module, func_name, (self._intf,)))
     self._scheduler.enterabs((now_naive.replace(hour=0, minute=0, second=0) + timedelta(days=1)).timestamp(), 1, lambda: None)
   
   def run(self):
